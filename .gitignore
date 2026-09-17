@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/ui_prmd/*
+!data/ui_prmd/.gitkeep
+data/recordings/*
+!data/recordings/.gitkeep
+models/*.pkl
+logs/*
+!logs/.gitkeep
+.streamlit/
