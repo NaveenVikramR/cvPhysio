@@ -32,11 +32,16 @@ MODELS_DIR = Path("models")
 # Rep-boundary state machine constants -- see the dev plan for rationale.
 # "Rest" is not a fixed angle (confirmed real sweeps: abduction rests near
 # ~20 deg, rotation near ~60 deg), so the baseline is estimated live.
+# MIN_REP_RANGE_DEG=25 is set from a real test clip: a genuine noise blip
+# measured only 4 deg of range (should be rejected), a real rep measured
+# 51 deg (must be accepted), training reps swept 110-140 deg -- 25 sits
+# with real headroom above the noise and below every real rep observed.
 CALIBRATION_FRAMES = 15
 CALIBRATION_MAX_STD_DEG = 6.0
 REST_BAND_DEG = 10.0
 BASELINE_WINDOW = 10
 MIN_REP_FRAMES = 15
+MIN_REP_RANGE_DEG = 25.0
 MAX_REP_FRAMES = 450
 CONFIDENCE_TOLERANCE_FRAMES = 10
 
@@ -109,7 +114,8 @@ class RepDetector:
             return "none", None
 
         # back within the rest band
-        if len(self.rep_buffer) < MIN_REP_FRAMES:
+        rep_range = max(self.rep_buffer) - min(self.rep_buffer)
+        if len(self.rep_buffer) < MIN_REP_FRAMES or rep_range < MIN_REP_RANGE_DEG:
             self._reset_to_resting()
             return "none", None  # silent discard -- flinch, not a real rep
 
