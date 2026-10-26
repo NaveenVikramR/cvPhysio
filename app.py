@@ -12,6 +12,7 @@ import argparse
 import json
 import statistics
 import sys
+import time
 from collections import Counter, deque
 from pathlib import Path
 
@@ -33,7 +34,7 @@ from src.feature_extraction import (
 )
 from src.feedback import LANDMARK_LABELS, SpeechFeedback, draw_overlay, message_for_result
 from src.pose_estimation import get_pose_landmarks, open_webcam
-from src.tracking import RepRecord, SessionTracker
+from src.tracking import DiscardRecord, RepRecord, SessionTracker
 
 MODELS_DIR = Path("models")
 CLASSIFIER_WARNING = (
@@ -70,6 +71,14 @@ MIN_REP_RANGE_DEG = 25.0
 MAX_REP_FRAMES = 450
 CONFIDENCE_TOLERANCE_FRAMES = 10
 CALIBRATION_STALL_FRAMES = 150  # ~a few seconds at a plausible live fps
+# Used only by the "already near rest" tracking-lost rescue below, NOT
+# REST_BAND_DEG itself: any angle that actually lands inside REST_BAND_DEG
+# while still visible completes (or too-short-discards) synchronously, in
+# the same update() call -- so by the time a rep reaches the tracking-lost
+# branch, its last visible angle is, by construction, always still outside
+# REST_BAND_DEG. A wider tolerance is what makes "was it already heading
+# back into rest" an actually answerable question from rep_buffer alone.
+RESCUE_REST_BAND_DEG = 2 * REST_BAND_DEG
 
 
 class RepDetector:
@@ -94,7 +103,8 @@ class RepDetector:
         """Advance by one frame. Returns (event, payload):
         ("none", None) -- nothing to report this frame
         ("rep_complete", {"angle_deg": [...], "side": [...]}) -- classify this
-        ("rep_discarded", reason: str) -- a buffered rep was thrown away
+        ("rep_discarded", {"reason_code": "too_short"|"too_long"|
+        "lost_tracking", "message": str}) -- a buffered rep was thrown away
         `failed` (landmark indices failing confidence this frame) is only
         used while CALIBRATING, to drive calibration_hint() below.
         """
@@ -131,8 +141,21 @@ class RepDetector:
         if not visible:
             self.bad_confidence_streak += 1
             if self.bad_confidence_streak > CONFIDENCE_TOLERANCE_FRAMES:
+                # Tracking was lost, but if the LAST valid frame had already
+                # returned near the rest band and the rep otherwise qualifies,
+                # that rep already happened -- emit it instead of discarding
+                # it just because confirmation came too late. Only discard
+                # when tracking is lost BEFORE the rep actually completed.
+                if self.rep_buffer and abs(self.rep_buffer[-1] - self.baseline) <= RESCUE_REST_BAND_DEG:
+                    rep_range = max(self.rep_buffer) - min(self.rep_buffer)
+                    if len(self.rep_buffer) >= MIN_REP_FRAMES and rep_range >= MIN_REP_RANGE_DEG:
+                        buffer, votes = self.rep_buffer, self.side_votes
+                        self.rest_window.append(self.rep_buffer[-1])
+                        self.baseline = statistics.fmean(self.rest_window)
+                        self._reset_to_resting()
+                        return "rep_complete", {"angle_deg": buffer, "side": votes}
                 self._reset_to_resting()
-                return "rep_discarded", "Rep lost -- tracking interrupted."
+                return "rep_discarded", {"reason_code": "lost_tracking", "message": "Rep lost -- tracking interrupted."}
             return "none", None
 
         self.bad_confidence_streak = 0
@@ -141,7 +164,7 @@ class RepDetector:
 
         if len(self.rep_buffer) > MAX_REP_FRAMES:
             self._reset_to_resting()
-            return "rep_discarded", "Movement took too long -- discarded."
+            return "rep_discarded", {"reason_code": "too_long", "message": "Movement took too long -- discarded."}
 
         if abs(angle_deg - self.baseline) > REST_BAND_DEG:
             return "none", None
@@ -150,7 +173,7 @@ class RepDetector:
         rep_range = max(self.rep_buffer) - min(self.rep_buffer)
         if len(self.rep_buffer) < MIN_REP_FRAMES or rep_range < MIN_REP_RANGE_DEG:
             self._reset_to_resting()
-            return "none", None  # silent discard -- flinch, not a real rep
+            return "rep_discarded", {"reason_code": "too_short", "message": "Movement too brief/small -- discarded."}
 
         buffer, votes = self.rep_buffer, self.side_votes
         self.rest_window.append(angle_deg)
@@ -181,7 +204,7 @@ class RepDetector:
 
 
 def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: str,
-                   smoother=None, required_roles: set[str] | None = None):
+                   smoother=None, t: float | None = None, required_roles: set[str] | None = None):
     """One frame through confidence-gating + RepDetector, plus a parallel
     elbow_angle_deg/trunk_lean_deg buffer kept aligned with RepDetector's
     own internal rep_buffer -- RepDetector only tracks a single angle_deg
@@ -195,7 +218,8 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
     `smoother`, if given (src.smoothing.LandmarkSmoother), runs between
     pose and features: raw landmarks in, smoothed (or held-over, or None
     if a dropout outlasted its hold budget) landmarks out, before any
-    angle is computed from them.
+    angle is computed from them. `t` is this frame's timestamp in
+    seconds (required if smoother is given -- see src/smoothing.py).
 
     `required_roles`, if given, is passed to check_confidence() instead
     of its exercise-based default -- pass src.rules.required_joint_roles()
@@ -208,7 +232,7 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
     frame is the RESTING->MOVING transition itself).
     """
     if smoother is not None:
-        landmarks = smoother.update(landmarks)
+        landmarks = smoother.update(landmarks, t)
 
     visible, failed, features = False, [], None
     elbow_val = trunk_val = None
@@ -245,6 +269,19 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
         parallel["total_frames"] = 0
 
     return event, payload, visible, failed
+
+
+def build_smoother():
+    """None if config/smoothing.json's "enabled" is false (the shipped
+    default -- see that file's "enabled_comment" for why) or no tuned
+    params exist yet; otherwise a fresh LandmarkSmoother from it."""
+    config = smoothing_module.load_config()
+    if not config.get("enabled"):
+        return None
+    return smoothing_module.LandmarkSmoother(
+        min_cutoff=config["min_cutoff"], beta=config["beta"],
+        d_cutoff=config["d_cutoff"], max_hold_frames=config["max_hold_frames"],
+    )
 
 
 def run_headless(video_path: str, exercise: str, scorer: str) -> None:
@@ -285,22 +322,20 @@ def run_headless(video_path: str, exercise: str, scorer: str) -> None:
 
     detector = RepDetector()
     parallel = {"elbow": [], "trunk": [], "total_frames": 0}
-    smoothing_config = smoothing_module.load_config()
-    smoother = smoothing_module.LandmarkSmoother(
-        freq=smoothing_config["freq_hz"], min_cutoff=smoothing_config["min_cutoff"],
-        beta=smoothing_config["beta"], d_cutoff=smoothing_config["d_cutoff"],
-        max_hold_frames=smoothing_config["max_hold_frames"],
-    )
+    smoother = build_smoother()
     rep_count = 0
-    print(f"Scoring {video_path} (exercise={exercise}, scorer={scorer}, fps={fps:.2f})")
+    frame_idx = 0
+    print(f"Scoring {video_path} (exercise={exercise}, scorer={scorer}, fps={fps:.2f}, smoothing={'on' if smoother else 'off'})")
 
     while True:
         ok, frame = cap.read()
         if not ok:
             break
+        t = frame_idx / fps
+        frame_idx += 1
         landmarks = get_pose_landmarks(frame)
         event, payload, _visible, _failed = process_frame(
-            detector, parallel, landmarks, exercise, smoother, required_roles,
+            detector, parallel, landmarks, exercise, smoother, t, required_roles,
         )
 
         if event == "rep_complete":
@@ -330,7 +365,7 @@ def run_headless(video_path: str, exercise: str, scorer: str) -> None:
                 else:
                     print(f"Rep {rep_count}: no trained model available.")
         elif event == "rep_discarded":
-            print(f"  (rep discarded: {payload})")
+            print(f"  (rep discarded: {payload['reason_code']} -- {payload['message']})")
 
     cap.release()
     if rep_count == 0:
@@ -387,12 +422,7 @@ if st.session_state.running:
     tracker = SessionTracker(user_id=user_id, exercise=exercise)
     detector = RepDetector()
     parallel = {"elbow": [], "trunk": [], "total_frames": 0}
-    smoothing_config = smoothing_module.load_config()
-    smoother = smoothing_module.LandmarkSmoother(
-        freq=smoothing_config["freq_hz"], min_cutoff=smoothing_config["min_cutoff"],
-        beta=smoothing_config["beta"], d_cutoff=smoothing_config["d_cutoff"],
-        max_hold_frames=smoothing_config["max_hold_frames"],
-    )
+    smoother = build_smoother()
     required_roles = rules_module.required_joint_roles() if rules_config else None
     speech = SpeechFeedback()
     cue_cooldown = rules_module.CueCooldown(rules_config["cue_cooldown_s"]["value"]) if rules_config else None
@@ -407,8 +437,9 @@ if st.session_state.running:
                 break
 
             landmarks = get_pose_landmarks(frame)
+            t = time.monotonic()  # live webcam: real arrival time, not an assumed fixed rate
             event, payload, visible, failed = process_frame(
-                detector, parallel, landmarks, exercise, smoother, required_roles,
+                detector, parallel, landmarks, exercise, smoother, t, required_roles,
             )
 
             if event == "rep_complete":
@@ -470,7 +501,10 @@ if st.session_state.running:
                         last_is_correct = None
                     speech.speak(last_message)  # spoken cue once per completed rep, not per frame
             elif event == "rep_discarded":
-                st.warning(payload)
+                tracker.add_discard(DiscardRecord(
+                    exercise=exercise, reason_code=payload["reason_code"], message=payload["message"],
+                ))
+                st.warning(payload["message"])
 
             stall_hint = detector.calibration_hint() if detector.state == "CALIBRATING" else None
             if stall_hint:
@@ -493,6 +527,6 @@ if st.session_state.running:
             frame_slot.image(annotated, channels="BGR")
     finally:
         capture.release()
-        if tracker.reps:
+        if tracker.reps or tracker.discards:
             tracker.save()
             st.json(tracker.summary())

@@ -1,5 +1,6 @@
 {
-  "freq_hz": 30.0,
+  "enabled": false,
+  "enabled_comment": "Left off by default: scripts/tune_smoothing.py requires >= 3 calibration-set clips to tune min_cutoff/beta safely, and only 1 exists in data/clips_manifest.csv right now. Also, the previous fixed min_cutoff=1.0/beta=0.3 defaults were measured (scripts/measure_smoothing_effect.py) to drop a real rep's count 1 -> 0 on the one real clip tested -- do not re-enable without re-running the tuning script once enough calibration clips exist.",
   "min_cutoff": 1.0,
   "beta": 0.3,
   "d_cutoff": 1.0,

@@ -7,11 +7,16 @@ only reads thresholds from config/exercises/*.json -- it never writes or
 changes them.
 
 Per clip that actually exists on disk: detected rep count vs
-expected_reps, and per rep, src.rules.score_rep()'s pass/fail and
-measured values. Smoothing (src/smoothing.py) is deliberately NOT
-applied here -- scripts/measure_smoothing_effect.py already found it can
-change rep count on the one real clip tested, so turning it on inside an
-accuracy harness by default would conflate two different questions.
+expected_reps, and per rep, src.rules.score_rep()'s status (pass/fail/
+insufficient_data) and measured values. insufficient_data reps are
+excluded from the confusion matrix, detection rates and false-fail rate
+-- they are neither a correct nor a wrong prediction -- and reported as
+their own rate instead.
+
+Smoothing (src/smoothing.py) is deliberately NOT applied here --
+scripts/measure_smoothing_effect.py already found it can change rep
+count, so turning it on inside an accuracy harness by default would
+conflate two different questions.
 
 Outputs: results/rules_eval.md (human-readable report) and
 results/rules_eval.csv (one row per scored rep).
@@ -50,7 +55,7 @@ def load_rep_detector_and_process_frame():
     launches Streamlit/headless logic at import time."""
     source = Path("app.py").read_text()
     start = source.index("CALIBRATION_FRAMES = 15")
-    end = source.index("\ndef run_headless(video_path")
+    end = source.index("\ndef build_smoother")
     namespace = {
         "statistics": statistics, "Counter": Counter, "deque": deque,
         "check_confidence": check_confidence, "extract_features": extract_features,
@@ -68,52 +73,65 @@ def read_manifest(path: Path) -> list[dict]:
         return list(csv.DictReader(f))
 
 
-def score_clip(clip_path: str, exercise: str, config: dict, RepDetectorClass, process_frame) -> tuple[list[dict], float]:
+def score_clip(clip_path: str, exercise: str, config: dict, required_roles, RepDetectorClass, process_frame) -> tuple[list[dict], float]:
     """Returns (list of score_rep() results, measured fps) for one clip."""
     cap = cv2.VideoCapture(clip_path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     detector = RepDetectorClass()
-    parallel = {"elbow": [], "trunk": []}
+    parallel = {"elbow": [], "trunk": [], "total_frames": 0}
     results = []
 
+    frame_idx = 0
     while True:
         ok, frame = cap.read()
         if not ok:
             break
+        t = frame_idx / fps
+        frame_idx += 1
         landmarks = get_pose_landmarks(frame)
-        event, payload, _visible, _failed = process_frame(detector, parallel, landmarks, exercise, None)
+        event, payload, _visible, _failed = process_frame(
+            detector, parallel, landmarks, exercise, None, t, required_roles,
+        )
         if event == "rep_complete":
             rep = {
                 "angle_deg": payload["angle_deg"],
                 "elbow_angle_deg": payload["elbow_angle_deg"],
                 "trunk_lean_deg": payload["trunk_lean_deg"],
+                "valid_fraction": payload["valid_fraction"],
             }
             results.append(rules_module.score_rep(rep, config, fps))
     cap.release()
     return results, fps
 
 
-def measure_fps(clip_path: str, exercise: str, config: dict, RepDetectorClass, process_frame) -> float:
+def measure_fps(clip_path: str, exercise: str, config: dict, required_roles, RepDetectorClass, process_frame) -> float:
     """Real measured frames/sec of the full live loop (pose + smoothing-
     off + confidence + RepDetector + rules scoring) on one clip."""
     cap = cv2.VideoCapture(clip_path)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     detector = RepDetectorClass()
-    parallel = {"elbow": [], "trunk": []}
+    parallel = {"elbow": [], "trunk": [], "total_frames": 0}
     n_frames = 0
+    frame_idx = 0
     start_t = time.perf_counter()
     while True:
         ok, frame = cap.read()
         if not ok:
             break
+        t = frame_idx / fps
+        frame_idx += 1
         landmarks = get_pose_landmarks(frame)
-        event, payload, _visible, _failed = process_frame(detector, parallel, landmarks, exercise, None)
+        event, payload, _visible, _failed = process_frame(
+            detector, parallel, landmarks, exercise, None, t, required_roles,
+        )
         if event == "rep_complete":
             rep = {
                 "angle_deg": payload["angle_deg"],
                 "elbow_angle_deg": payload["elbow_angle_deg"],
                 "trunk_lean_deg": payload["trunk_lean_deg"],
+                "valid_fraction": payload["valid_fraction"],
             }
-            rules_module.score_rep(rep, config, cap.get(cv2.CAP_PROP_FPS) or 30.0)
+            rules_module.score_rep(rep, config, fps)
         n_frames += 1
     elapsed = time.perf_counter() - start_t
     cap.release()
@@ -128,6 +146,7 @@ def main() -> None:
         return
 
     RepDetectorClass, process_frame = load_rep_detector_and_process_frame()
+    required_roles = rules_module.required_joint_roles()
 
     missing, usable = [], []
     for row in rows:
@@ -143,7 +162,7 @@ def main() -> None:
     csv_rows = []
     per_clip_summary = []
     calibration_measurements = []  # (clip, rep_idx, rule_id, measured)
-    eval_rep_rows = []  # (intended, failed_rules, passed)
+    eval_rep_rows = []  # (intended, failed_rules, status)
 
     config_cache = {}
 
@@ -160,7 +179,7 @@ def main() -> None:
             continue
 
         print(f"Scoring {row['clip']} (exercise={exercise}, set={row['set']}, intended={row['intended']})...")
-        results, fps = score_clip(row["clip"], exercise, config, RepDetectorClass, process_frame)
+        results, fps = score_clip(row["clip"], exercise, config, required_roles, RepDetectorClass, process_frame)
         expected = int(row["expected_reps"])
         detected = len(results)
         per_clip_summary.append({
@@ -172,7 +191,8 @@ def main() -> None:
             csv_row = {
                 "clip": row["clip"], "set": row["set"], "exercise": exercise,
                 "intended": row["intended"], "rep_index": rep_idx,
-                "passed": result["passed"], "failed_rules": ";".join(result["failed_rules"]),
+                "status": result["status"], "failed_rules": ";".join(result["failed_rules"]),
+                "valid_fraction": round(result["valid_fraction"], 3),
             }
             for rule_id in RULE_IDS:
                 r = result["rules"].get(rule_id)
@@ -188,7 +208,7 @@ def main() -> None:
                     if r:
                         calibration_measurements.append((row["clip"], rep_idx, rule_id, r["measured"]))
             if row["set"] == "eval":
-                eval_rep_rows.append((row["intended"], result["failed_rules"], result["passed"]))
+                eval_rep_rows.append((row["intended"], result["failed_rules"], result["status"]))
 
     # write per-rep CSV
     csv_path = RESULTS_DIR / "rules_eval.csv"
@@ -201,24 +221,30 @@ def main() -> None:
     else:
         print(f"\nNo reps were scored -- {csv_path} not written.")
 
+    # insufficient_data rate (eval set), reported separately, never folded
+    # into the confusion matrix / detection rates / false-fail rate below
+    insufficient_eval_rows = [r for r in eval_rep_rows if r[2] == "insufficient_data"]
+    scorable_eval_rows = [r for r in eval_rep_rows if r[2] != "insufficient_data"]
+
     # confusion matrix on eval set (ground truth correct/fault vs predicted pass/fail)
+    # -- insufficient_data reps excluded, per PART A's requirement.
     confusion = {"correct": {"pass": 0, "fail": 0}, "fault": {"pass": 0, "fail": 0}}
-    for intended, _failed_rules, passed in eval_rep_rows:
+    for intended, _failed_rules, status in scorable_eval_rows:
         gt = "correct" if intended == "correct" else "fault"
-        confusion[gt]["pass" if passed else "fail"] += 1
+        confusion[gt][status] += 1
 
     detection_rates = {}
     for fault_type, rule_id in FAULT_TO_RULE.items():
-        matching = [fr for intended, fr, _p in eval_rep_rows if intended == fault_type]
+        matching = [fr for intended, fr, status in scorable_eval_rows if intended == fault_type]
         if matching:
             hit = sum(1 for fr in matching if rule_id in fr)
             detection_rates[fault_type] = (hit, len(matching))
 
-    correct_eval_reps = [(fr, p) for intended, fr, p in eval_rep_rows if intended == "correct"]
-    false_fail_count = sum(1 for _fr, p in correct_eval_reps if not p)
+    correct_eval_reps = [(fr, status) for intended, fr, status in scorable_eval_rows if intended == "correct"]
+    false_fail_count = sum(1 for _fr, status in correct_eval_reps if status == "fail")
     wrong_rule_counts = Counter()
-    for fr, p in correct_eval_reps:
-        if not p:
+    for fr, status in correct_eval_reps:
+        if status == "fail":
             wrong_rule_counts.update(fr)
 
     fps_measured = None
@@ -228,7 +254,7 @@ def main() -> None:
         config = config_cache.get(exercise)
         if config and not isinstance(config, Exception):
             print(f"\nMeasuring live-loop FPS on {calib_row['clip']}...")
-            fps_measured = measure_fps(calib_row["clip"], exercise, config, RepDetectorClass, process_frame)
+            fps_measured = measure_fps(calib_row["clip"], exercise, config, required_roles, RepDetectorClass, process_frame)
 
     # ---- build markdown report ----
     lines = []
@@ -255,17 +281,24 @@ def main() -> None:
     else:
         lines.append("Rep-count accuracy (eval set): N/A -- no usable eval-set clips.\n")
 
-    lines.append("## Confusion matrix (eval set): intended vs predicted\n")
+    lines.append("## Insufficient-data rate (eval set)\n")
     if eval_rep_rows:
+        lines.append(f"{len(insufficient_eval_rows)}/{len(eval_rep_rows)} eval-set reps were status=insufficient_data "
+                      f"(excluded from the confusion matrix, detection rates, and false-fail rate below).\n")
+    else:
+        lines.append("N/A -- no usable eval-set reps.\n")
+
+    lines.append("## Confusion matrix (eval set, pass/fail reps only): intended vs predicted\n")
+    if scorable_eval_rows:
         lines.append("| intended \\ predicted | pass | fail |")
         lines.append("|---|---|---|")
         lines.append(f"| correct | {confusion['correct']['pass']} | {confusion['correct']['fail']} |")
         lines.append(f"| fault (any) | {confusion['fault']['pass']} | {confusion['fault']['fail']} |")
         lines.append("")
     else:
-        lines.append("N/A -- no usable eval-set reps.\n")
+        lines.append("N/A -- no usable eval-set pass/fail reps.\n")
 
-    lines.append("## Per-fault detection rate (matching rule fired)\n")
+    lines.append("## Per-fault detection rate (matching rule fired, pass/fail reps only)\n")
     if detection_rates:
         lines.append("| fault type | matching rule | detection rate |")
         lines.append("|---|---|---|")
@@ -279,7 +312,7 @@ def main() -> None:
     else:
         lines.append("N/A -- no usable eval-set clips for any fault type.\n")
 
-    lines.append("## False-fail rate on correct reps (eval set)\n")
+    lines.append("## False-fail rate on correct reps (eval set, pass/fail reps only)\n")
     if correct_eval_reps:
         lines.append(f"{false_fail_count}/{len(correct_eval_reps)} intended-correct eval reps failed at least one rule.\n")
         if wrong_rule_counts:

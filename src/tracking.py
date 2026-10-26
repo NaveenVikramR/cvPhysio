@@ -21,15 +21,30 @@ class RepRecord:
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
+@dataclass
+class DiscardRecord:
+    """A repetition the segmenter started buffering but never completed.
+    reason_code is one of "too_short", "too_long", "lost_tracking" (see
+    app.py's RepDetector)."""
+    exercise: str
+    reason_code: str
+    message: str
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
 class SessionTracker:
     def __init__(self, user_id: str, exercise: str):
         self.user_id = user_id
         self.exercise = exercise
         self.started_at = datetime.now(timezone.utc)
         self.reps: list[RepRecord] = []
+        self.discards: list[DiscardRecord] = []
 
     def add_rep(self, rep: RepRecord) -> None:
         self.reps.append(rep)
+
+    def add_discard(self, discard: DiscardRecord) -> None:
+        self.discards.append(discard)
 
     def summary(self) -> dict:
         total = len(self.reps)
@@ -46,6 +61,7 @@ class SessionTracker:
             "insufficient_data_reps": insufficient,
             "accuracy_pct": round(100 * passed / scored, 1) if scored else None,
             "insufficient_data_rate_pct": round(100 * insufficient / total, 1) if total else None,
+            "discarded_segments": len(self.discards),
         }
 
     def save(self, logs_dir: Path | str = LOGS_DIR) -> Path:
@@ -59,6 +75,13 @@ class SessionTracker:
                 writer.writeheader()
                 for rep in self.reps:
                     writer.writerow(asdict(rep))
+        if self.discards:
+            discards_path = path.with_suffix(".discards.csv")
+            with discards_path.open("w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=list(asdict(self.discards[0]).keys()))
+                writer.writeheader()
+                for discard in self.discards:
+                    writer.writerow(asdict(discard))
         summary_path = path.with_suffix(".summary.json")
         summary_path.write_text(json.dumps(self.summary(), indent=2))
         return path
