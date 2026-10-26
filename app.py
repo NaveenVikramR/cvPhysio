@@ -23,7 +23,7 @@ from src.feature_extraction import (
     extract_rep_features,
     select_side,
 )
-from src.feedback import LANDMARK_LABELS, draw_overlay, message_for_result
+from src.feedback import LANDMARK_LABELS, SpeechFeedback, draw_overlay, message_for_result
 from src.pose_estimation import get_pose_landmarks, open_webcam
 from src.tracking import RepRecord, SessionTracker
 
@@ -186,6 +186,7 @@ if st.session_state.running:
     capture = open_webcam()
     tracker = SessionTracker(user_id=user_id, exercise=exercise)
     detector = RepDetector()
+    speech = SpeechFeedback()
     rep_count = 0
     last_message = "Ready — begin your repetition."
     last_is_correct = None
@@ -225,6 +226,7 @@ if st.session_state.running:
                 else:
                     last_message = f"Rep {rep_count} complete — no trained model, correctness not shown."
                     last_is_correct = None
+                speech.speak(last_message)  # spoken cue once per completed rep, not per frame
             elif event == "rep_discarded":
                 st.warning(payload)
 
