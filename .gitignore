@@ -11,6 +11,7 @@ data/ui_prmd/*
 data/recordings/*
 !data/recordings/.gitkeep
 models/*.pkl
+models/*.metadata.json
 logs/*
 !logs/.gitkeep
 .streamlit/
