@@ -23,7 +23,7 @@ from src.feature_extraction import (
     extract_rep_features,
     select_side,
 )
-from src.feedback import draw_overlay, message_for_result
+from src.feedback import LANDMARK_LABELS, draw_overlay, message_for_result
 from src.pose_estimation import get_pose_landmarks, open_webcam
 from src.tracking import RepRecord, SessionTracker
 
@@ -44,6 +44,7 @@ MIN_REP_FRAMES = 15
 MIN_REP_RANGE_DEG = 25.0
 MAX_REP_FRAMES = 450
 CONFIDENCE_TOLERANCE_FRAMES = 10
+CALIBRATION_STALL_FRAMES = 150  # ~a few seconds at a plausible live fps
 
 
 class RepDetector:
@@ -56,19 +57,26 @@ class RepDetector:
         self.state = "CALIBRATING"
         self.baseline = None
         self.calib_window = deque(maxlen=CALIBRATION_FRAMES)
+        self.calib_fail_counts = Counter()
+        self.calib_attempt_frames = 0
         self.rest_window = deque(maxlen=BASELINE_WINDOW)
         self.rep_buffer = []
         self.side_votes = []
         self.bad_confidence_streak = 0
 
-    def update(self, visible: bool, angle_deg: float | None, side: str | None):
+    def update(self, visible: bool, angle_deg: float | None, side: str | None,
+               failed: list[int] | None = None):
         """Advance by one frame. Returns (event, payload):
         ("none", None) -- nothing to report this frame
         ("rep_complete", {"angle_deg": [...], "side": [...]}) -- classify this
         ("rep_discarded", reason: str) -- a buffered rep was thrown away
+        `failed` (landmark indices failing confidence this frame) is only
+        used while CALIBRATING, to drive calibration_hint() below.
         """
         if self.state == "CALIBRATING":
+            self.calib_attempt_frames += 1
             if not visible:
+                self.calib_fail_counts.update(failed or [])
                 return "none", None
             self.calib_window.append(angle_deg)
             if len(self.calib_window) < CALIBRATION_FRAMES:
@@ -131,6 +139,21 @@ class RepDetector:
         self.bad_confidence_streak = 0
         self.state = "RESTING"
 
+    def calibration_hint(self) -> str | None:
+        """Stable, actionable hint once CALIBRATING has stalled for a
+        while -- names the single most-frequently-failing landmark instead
+        of the per-frame low-visibility message flickering between
+        whichever landmark happens to fail on a given frame. Returns None
+        before the stall threshold, or once no longer calibrating.
+        """
+        if self.state != "CALIBRATING" or self.calib_attempt_frames < CALIBRATION_STALL_FRAMES:
+            return None
+        if not self.calib_fail_counts:
+            return "Having trouble getting a stable reading — please hold still."
+        worst_idx, _ = self.calib_fail_counts.most_common(1)[0]
+        label = LANDMARK_LABELS.get(worst_idx, str(worst_idx))
+        return f"Step back so your {label} stays visible, then hold still."
+
 
 st.set_page_config(page_title="cvPhysio", layout="centered")
 st.title("cvPhysio — AI Rehabilitation Coach")
@@ -181,7 +204,7 @@ if st.session_state.running:
 
             angle_deg = features["angle_deg"] if features else None
             side = features["side"] if features else None
-            event, payload = detector.update(visible, angle_deg, side)
+            event, payload = detector.update(visible, angle_deg, side, failed)
 
             if event == "rep_complete":
                 rep_frames = pd.DataFrame({"angle_deg": payload["angle_deg"]})
@@ -205,7 +228,12 @@ if st.session_state.running:
             elif event == "rep_discarded":
                 st.warning(payload)
 
-            if landmarks is None:
+            stall_hint = detector.calibration_hint() if detector.state == "CALIBRATING" else None
+            if stall_hint:
+                # Stable, actionable hint once stuck calibrating -- takes
+                # priority over the flickery per-frame low-visibility message.
+                message, overlay_is_correct = stall_hint, None
+            elif landmarks is None:
                 message, overlay_is_correct = "No person detected.", None
             elif not visible:
                 message, overlay_is_correct = message_for_result(None, failed), None
