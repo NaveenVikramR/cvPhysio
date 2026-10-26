@@ -1,40 +1,25 @@
-"""Video capture & pose estimation. Output: per-frame landmark dict, nothing else."""
-
-from dataclasses import dataclass
+"""Video capture & pose estimation. Output: a 33-tuple landmark list per
+frame (MediaPipe's PoseLandmark order), nothing else.
+"""
 
 import cv2
 import mediapipe as mp
 
-LANDMARK_NAMES = [lm.name for lm in mp.solutions.pose.PoseLandmark]
+_mp_pose = mp.solutions.pose
+_pose = _mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
 
-@dataclass
-class Landmark:
-    x: float
-    y: float
-    z: float
-    visibility: float
-
-
-class PoseEstimator:
-    def __init__(self, min_detection_confidence: float = 0.5, min_tracking_confidence: float = 0.5):
-        self._pose = mp.solutions.pose.Pose(
-            min_detection_confidence=min_detection_confidence,
-            min_tracking_confidence=min_tracking_confidence,
-        )
-
-    def process_frame(self, frame_bgr) -> dict[str, Landmark] | None:
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        result = self._pose.process(frame_rgb)
-        if not result.pose_landmarks:
-            return None
-        return {
-            name: Landmark(lm.x, lm.y, lm.z, lm.visibility)
-            for name, lm in zip(LANDMARK_NAMES, result.pose_landmarks.landmark)
-        }
-
-    def close(self) -> None:
-        self._pose.close()
+def get_pose_landmarks(frame) -> list[tuple[float, float, float, float]] | None:
+    """Run MediaPipe Pose on a BGR frame and return the 33 landmarks as
+    (x, y, z, visibility) tuples, indexed per MediaPipe's PoseLandmark
+    enum (e.g. 11=left shoulder, 23=left hip). Returns None if no pose
+    was detected in the frame.
+    """
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    result = _pose.process(frame_rgb)
+    if not result.pose_landmarks:
+        return None
+    return [(lm.x, lm.y, lm.z, lm.visibility) for lm in result.pose_landmarks.landmark]
 
 
 def open_webcam(camera_index: int = 0) -> cv2.VideoCapture:

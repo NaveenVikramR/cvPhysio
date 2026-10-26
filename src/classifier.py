@@ -10,7 +10,7 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GroupShuffleSplit
 
-FEATURE_COLUMNS = ["angle_deg"]
+FEATURE_COLUMNS = ["angle_max_deg", "angle_min_deg", "angle_mean_deg", "angle_range_deg", "angle_midpoint_deg"]
 LABEL_COLUMN = "is_correct"
 GROUP_COLUMN = "subject_id"
 
@@ -32,6 +32,14 @@ class CorrectnessClassifier:
         confidence = float(self._model.predict_proba(row)[0].max())
         return {"is_correct": label, "confidence": confidence}
 
+    def predict_batch(self, features: pd.DataFrame) -> pd.DataFrame:
+        if not self._is_fitted:
+            raise RuntimeError("Model is not trained or loaded yet")
+        rows = features[FEATURE_COLUMNS]
+        labels = self._model.predict(rows).astype(bool)
+        confidences = self._model.predict_proba(rows).max(axis=1)
+        return pd.DataFrame({"is_correct": labels, "confidence": confidences}, index=features.index)
+
     def save(self, path: str | Path) -> None:
         joblib.dump(self._model, path)
 
@@ -52,13 +60,3 @@ def cross_subject_split(
     splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
     train_idx, test_idx = next(splitter.split(dataset, groups=dataset[GROUP_COLUMN]))
     return dataset.iloc[train_idx], dataset.iloc[test_idx]
-
-
-def load_dataset(raw_dir: str | Path, exercise: str) -> pd.DataFrame:
-    raw_dir = Path(raw_dir)
-    if not any(raw_dir.iterdir()) if raw_dir.exists() else True:
-        raise NotImplementedError(
-            f"No UI-PRMD files found under {raw_dir}. Download UI-PRMD movements "
-            "7 and 9 into data/raw/ before calling load_dataset()."
-        )
-    raise NotImplementedError("UI-PRMD parsing not yet implemented for exercise: " + exercise)

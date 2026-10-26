@@ -10,9 +10,16 @@ import pyttsx3
 CORRECT_MESSAGE = "Good form, keep going."
 INCORRECT_MESSAGE = "Adjust your form."
 
+LANDMARK_LABELS = {
+    11: "left shoulder", 12: "right shoulder",
+    13: "left elbow", 14: "right elbow",
+    15: "left wrist", 16: "right wrist",
+    23: "left hip", 24: "right hip",
+}
 
-def low_visibility_message(failed_landmarks: list[str]) -> str:
-    readable = ", ".join(name.replace("_", " ").lower() for name in failed_landmarks)
+
+def low_visibility_message(failed_landmarks: list[int]) -> str:
+    readable = ", ".join(LANDMARK_LABELS.get(i, str(i)) for i in failed_landmarks)
     return f"Can't clearly see your {readable}. Please step back or adjust lighting."
 
 
@@ -37,7 +44,7 @@ class SpeechFeedback:
         threading.Thread(target=_run, daemon=True).start()
 
 
-def message_for_result(result: dict | None, failed_landmarks: list[str] | None = None) -> str:
+def message_for_result(result: dict | None, failed_landmarks: list[int] | None = None) -> str:
     if result is None:
         return low_visibility_message(failed_landmarks or [])
     return CORRECT_MESSAGE if result["is_correct"] else INCORRECT_MESSAGE
