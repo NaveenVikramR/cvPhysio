@@ -12,6 +12,7 @@ data/recordings/*
 !data/recordings/.gitkeep
 models/*.pkl
 models/*.metadata.json
+models/*.task
 logs/*
 !logs/.gitkeep
 .streamlit/
