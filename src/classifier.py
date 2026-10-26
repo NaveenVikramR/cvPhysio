@@ -10,7 +10,8 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import GroupShuffleSplit
 
-FEATURE_COLUMNS = ["angle_max_deg", "angle_min_deg", "angle_mean_deg", "angle_range_deg", "angle_midpoint_deg"]
+FEATURE_COLUMNS = ["angle_max_deg", "angle_min_deg", "angle_mean_deg", "angle_range_deg",
+                    "angle_midpoint_deg", "angle_recovery_deg"]
 LABEL_COLUMN = "is_correct"
 GROUP_COLUMN = "subject_id"
 

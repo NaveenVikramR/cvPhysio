@@ -100,6 +100,14 @@ def extract_rep_features(sequence_df: pd.DataFrame, angle_col: str = "angle_deg"
     dataset_loader.py, via compute_angle() on the same joint triplet used
     by compute_shoulder_abduction_angle/compute_shoulder_rotation_angle, so
     train-time and inference-time angles stay geometrically consistent).
+
+    angle_recovery_deg: how far the rep's final angle sits from its
+    starting angle -- added after a diagnostic plot of real shoulder_
+    rotation reps (scripts/plot_rotation_reps.py) showed an incorrect rep
+    that dipped lower than every correct rep shown but recovered more
+    slowly, ending well short of where it started. Magnitude alone
+    (max/min/range) can't distinguish that from a good rep; distance from
+    the starting position can.
     """
     angles = sequence_df[angle_col]
     midpoint_idx = len(angles) // 2
@@ -109,6 +117,7 @@ def extract_rep_features(sequence_df: pd.DataFrame, angle_col: str = "angle_deg"
         "angle_mean_deg": float(angles.mean()),
         "angle_range_deg": float(angles.max() - angles.min()),
         "angle_midpoint_deg": float(angles.iloc[midpoint_idx]),
+        "angle_recovery_deg": float(abs(angles.iloc[-1] - angles.iloc[0])),
     }
 
 
