@@ -3,7 +3,11 @@
   "notice": "Every numeric value below is a provisional placeholder picked by the developer for testing, not a clinical judgment. A licensed physiotherapist must review and set appropriate values per patient before this is used for real feedback.",
   "target_peak_deg": {"value": 90, "status": "provisional"},
   "tolerance_deg": {"value": 15, "status": "provisional"},
-  "min_elbow_straight_deg": {"value": 150, "status": "provisional"},
+  "min_elbow_straight_deg": {
+    "value": 135,
+    "status": "provisional",
+    "comment": "Was 150. Lowered to 135 based on the training-correct per-rep MIN elbow angle across all 100 UI-PRMD m07-correct reps (Kinect FK positions, via the same compute_elbow_angle()): min=138.0 deg -- 150 would have flagged 14/100 of UI-PRMD's own correct reps. 135 sits just under that observed floor. This is still Kinect-derived, not webcam-derived -- must be re-set from real webcam calibration clips (data/clips_manifest.csv, set=calibration) once enough exist."
+  },
   "max_trunk_lean_deg": {"value": 15, "status": "provisional"},
   "tempo_min_s": {"value": 1.0, "status": "provisional"},
   "tempo_max_s": {"value": 6.0, "status": "provisional"},
