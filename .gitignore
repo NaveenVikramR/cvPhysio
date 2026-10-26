@@ -18,3 +18,5 @@ logs/*
 scripts/output/
 scratch/
 .streamlit/
+data/clips_manifest.csv
+results/
