@@ -93,6 +93,39 @@ def compute_shoulder_rotation_angle(landmarks: list[tuple[float, float, float, f
     )
 
 
+def compute_elbow_angle(landmarks: list[tuple[float, float, float, float]]) -> float:
+    """Elbow angle: angle at the elbow between the upper arm (elbow->
+    shoulder) and the forearm (elbow->wrist) -- ~180 deg for a straight
+    arm, smaller as the elbow bends. Uses whichever arm (left/right) has
+    higher average landmark visibility. Live-pipeline helper for
+    src/rules.py's "elbow stays roughly straight" rule.
+    """
+    side = select_side(landmarks)
+    shoulder = landmarks[side["shoulder"]]
+    elbow = landmarks[side["elbow"]]
+    wrist = landmarks[side["wrist"]]
+    return compute_angle(shoulder, elbow, wrist)
+
+
+def compute_trunk_lean_deg(landmarks: list[tuple[float, float, float, float]]) -> float:
+    """Trunk lean from vertical, in degrees: the angle between the trunk
+    axis (hip midpoint -> shoulder midpoint) and straight up. 0 deg is an
+    upright trunk; larger values mean more lean/compensation. Uses the
+    midpoint of both shoulders and both hips (bilateral), not select_side
+    -- trunk posture isn't a single-arm measurement. "Up" is -Y because
+    this operates on raw MediaPipe image-space landmarks (Y increases
+    downward), so this must only be called on live landmarks, never on
+    UI-PRMD's Y-up FK positions. Live-pipeline helper for src/rules.py's
+    "trunk lean below limit" rule.
+    """
+    shoulder_mid = (np.asarray(landmarks[LEFT["shoulder"]][:3], dtype=float)
+                     + np.asarray(landmarks[RIGHT["shoulder"]][:3], dtype=float)) / 2
+    hip_mid = (np.asarray(landmarks[LEFT["hip"]][:3], dtype=float)
+               + np.asarray(landmarks[RIGHT["hip"]][:3], dtype=float)) / 2
+    up_point = hip_mid + np.array([0.0, -1.0, 0.0])
+    return compute_angle(shoulder_mid, hip_mid, up_point)
+
+
 def extract_rep_features(sequence_df: pd.DataFrame, angle_col: str = "angle_deg") -> dict:
     """One repetition's frame sequence -> aggregate feature dict for
     training. sequence_df is one rep's frames in original frame order, with
