@@ -16,4 +16,5 @@ models/*.task
 logs/*
 !logs/.gitkeep
 scripts/output/
+scratch/
 .streamlit/
