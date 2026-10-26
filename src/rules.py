@@ -13,6 +13,30 @@ from pathlib import Path
 
 CONFIG_DIR = Path("config/exercises")
 
+RULE_IDS = ["peak_angle", "elbow_straight", "trunk_lean", "tempo"]
+
+# Which joint roles each rule's underlying feature depends on -- the
+# single source of truth for what the confidence gate must check before
+# a frame is trusted for scoring. feature_extraction.check_confidence()
+# takes required_joint_roles() instead of re-hardcoding this list, so
+# the two can't drift apart the way they did before (elbow_straight
+# depends on compute_elbow_angle(), which needs the wrist, but the old
+# confidence gate for shoulder_abduction never checked it).
+REQUIRED_ROLES_BY_RULE = {
+    "peak_angle": {"shoulder", "elbow", "hip"},
+    "elbow_straight": {"shoulder", "elbow", "wrist"},
+    "trunk_lean": {"shoulder", "hip"},
+    "tempo": set(),
+}
+
+
+def required_joint_roles() -> set[str]:
+    """Union of every active rule's required joint roles."""
+    roles = set()
+    for rule_id in RULE_IDS:
+        roles |= REQUIRED_ROLES_BY_RULE[rule_id]
+    return roles
+
 
 def load_config(exercise: str) -> dict:
     path = CONFIG_DIR / f"{exercise}.json"
@@ -31,17 +55,27 @@ def _value(config: dict, key: str) -> float:
 
 def score_rep(rep: dict, config: dict, fps: float) -> dict:
     """rep: {"angle_deg": [...], "elbow_angle_deg": [...], "trunk_lean_deg":
-    [...]}, one value per frame of the completed repetition, all three
-    lists the same length. fps: frames/sec of the source video or webcam,
-    used to convert the rep's frame count into a tempo in seconds.
+    [...], "valid_fraction": float}. The three feature lists are one
+    value per VALID (confidence-gated) frame of the completed repetition,
+    all equal length -- frames below the visibility gate are excluded
+    before this is called (see app.py's process_frame()).
+    valid_fraction is valid_frames / total_frames_in_the_rep's_span
+    (including frames the gate rejected), supplied by the caller since
+    only it tracks the rejected frames.
+    fps: frames/sec of the source video or webcam, used to convert the
+    rep's frame count into a tempo in seconds.
 
-    Returns {"passed": bool, "failed_rules": [rule_id, ...],
-    "rules": {rule_id: {"measured": float, "allowed": [lo, hi], "passed":
-    bool}}}.
+    Returns {"status": "pass" | "fail" | "insufficient_data",
+    "failed_rules": [rule_id, ...], "rules": {rule_id: {"measured":
+    float, "allowed": [lo, hi], "passed": bool}}, "valid_fraction": float,
+    "cue": str | None}. Rules are still computed even when status is
+    "insufficient_data" (useful for calibration-set reporting), but that
+    status itself must never be read as a pass or a fail.
     """
     angle = rep["angle_deg"]
     elbow = rep["elbow_angle_deg"]
     trunk = rep["trunk_lean_deg"]
+    valid_fraction = rep["valid_fraction"]
     if not (len(angle) == len(elbow) == len(trunk)) or len(angle) == 0:
         raise ValueError("rep's angle_deg/elbow_angle_deg/trunk_lean_deg must be equal-length and non-empty")
 
@@ -51,6 +85,7 @@ def score_rep(rep: dict, config: dict, fps: float) -> dict:
     max_trunk = _value(config, "max_trunk_lean_deg")
     tempo_min = _value(config, "tempo_min_s")
     tempo_max = _value(config, "tempo_max_s")
+    min_valid_fraction = _value(config, "min_valid_fraction")
 
     peak = max(angle)
     worst_elbow = min(elbow)
@@ -82,7 +117,16 @@ def score_rep(rep: dict, config: dict, fps: float) -> dict:
     }
 
     failed_rules = [rule_id for rule_id, r in rules.items() if not r["passed"]]
-    return {"passed": len(failed_rules) == 0, "failed_rules": failed_rules, "rules": rules}
+
+    if valid_fraction < min_valid_fraction:
+        return {
+            "status": "insufficient_data", "failed_rules": failed_rules, "rules": rules,
+            "valid_fraction": valid_fraction, "cue": config["cues"].get("insufficient_data"),
+        }
+    return {
+        "status": "pass" if not failed_rules else "fail", "failed_rules": failed_rules, "rules": rules,
+        "valid_fraction": valid_fraction, "cue": None,
+    }
 
 
 class CueCooldown:

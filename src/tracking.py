@@ -16,8 +16,8 @@ class RepRecord:
     exercise: str
     side: str
     angle_deg: float
-    is_correct: bool
-    confidence: float
+    status: str  # "pass" | "fail" | "insufficient_data" (classifier scorer only ever produces pass/fail)
+    confidence: float | None
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -33,13 +33,19 @@ class SessionTracker:
 
     def summary(self) -> dict:
         total = len(self.reps)
-        correct = sum(1 for r in self.reps if r.is_correct)
+        passed = sum(1 for r in self.reps if r.status == "pass")
+        failed = sum(1 for r in self.reps if r.status == "fail")
+        insufficient = sum(1 for r in self.reps if r.status == "insufficient_data")
+        scored = passed + failed
         return {
             "user_id": self.user_id,
             "exercise": self.exercise,
             "total_reps": total,
-            "correct_reps": correct,
-            "accuracy_pct": round(100 * correct / total, 1) if total else None,
+            "passed_reps": passed,
+            "failed_reps": failed,
+            "insufficient_data_reps": insufficient,
+            "accuracy_pct": round(100 * passed / scored, 1) if scored else None,
+            "insufficient_data_rate_pct": round(100 * insufficient / total, 1) if total else None,
         }
 
     def save(self, logs_dir: Path | str = LOGS_DIR) -> Path:

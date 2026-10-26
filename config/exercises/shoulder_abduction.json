@@ -8,10 +8,12 @@
   "tempo_min_s": {"value": 1.0, "status": "provisional"},
   "tempo_max_s": {"value": 6.0, "status": "provisional"},
   "cue_cooldown_s": {"value": 8, "status": "provisional"},
+  "min_valid_fraction": {"value": 0.7, "status": "provisional"},
   "cues": {
     "peak_angle": "Raise your arm closer to the target height.",
     "elbow_straight": "Keep your elbow straighter as you raise your arm.",
     "trunk_lean": "Keep your torso upright -- try not to lean.",
-    "tempo": "Move at a steadier, more controlled pace."
+    "tempo": "Move at a steadier, more controlled pace.",
+    "insufficient_data": "Keep your whole arm in view."
   }
 }

@@ -180,19 +180,27 @@ class RepDetector:
         return f"Step back so your {label} stays visible, then hold still."
 
 
-def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: str, smoother=None):
+def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: str,
+                   smoother=None, required_roles: set[str] | None = None):
     """One frame through confidence-gating + RepDetector, plus a parallel
     elbow_angle_deg/trunk_lean_deg buffer kept aligned with RepDetector's
     own internal rep_buffer -- RepDetector only tracks a single angle_deg
     series, but src.rules.score_rep() needs elbow/trunk too, for exactly
-    the same frames. `parallel` is {"elbow": [...], "trunk": [...]},
-    mutated in place; on "rep_complete" the aligned sequences are added to
-    the returned payload under "elbow_angle_deg"/"trunk_lean_deg".
+    the same frames. `parallel` is {"elbow": [...], "trunk": [...],
+    "total_frames": int}, mutated in place; on "rep_complete" the aligned
+    sequences and valid_fraction (valid/total frames over the rep's whole
+    span, including ones the confidence gate rejected) are added to the
+    returned payload.
 
     `smoother`, if given (src.smoothing.LandmarkSmoother), runs between
     pose and features: raw landmarks in, smoothed (or held-over, or None
     if a dropout outlasted its hold budget) landmarks out, before any
     angle is computed from them.
+
+    `required_roles`, if given, is passed to check_confidence() instead
+    of its exercise-based default -- pass src.rules.required_joint_roles()
+    when scoring with rules, so the gate checks exactly what the active
+    rules' features depend on (e.g. the wrist, for elbow_straight).
 
     Mirrors RepDetector.update()'s own append rule: a frame is part of
     the rep buffer iff it's visible AND (the detector was already MOVING,
@@ -205,7 +213,7 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
     visible, failed, features = False, [], None
     elbow_val = trunk_val = None
     if landmarks is not None:
-        visible, failed = check_confidence(landmarks, select_side(landmarks), exercise)
+        visible, failed = check_confidence(landmarks, select_side(landmarks), exercise, required_roles)
         features = extract_features(landmarks, exercise) if visible else None
         elbow_val = compute_elbow_angle(landmarks)
         trunk_val = compute_trunk_lean_deg(landmarks)
@@ -217,18 +225,24 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
     event, payload = detector.update(visible, angle_deg, side, failed)
     new_state = detector.state
 
-    contributed = visible and (prev_state == "MOVING" or (prev_state == "RESTING" and new_state == "MOVING"))
-    if contributed:
-        parallel["elbow"].append(elbow_val)
-        parallel["trunk"].append(trunk_val)
+    in_rep_span = prev_state == "MOVING" or (prev_state == "RESTING" and new_state == "MOVING")
+    if in_rep_span:
+        parallel["total_frames"] += 1
+        if visible:
+            parallel["elbow"].append(elbow_val)
+            parallel["trunk"].append(trunk_val)
 
     if event == "rep_complete":
         payload["elbow_angle_deg"] = list(parallel["elbow"])
         payload["trunk_lean_deg"] = list(parallel["trunk"])
+        payload["valid_fraction"] = (
+            len(parallel["elbow"]) / parallel["total_frames"] if parallel["total_frames"] else 0.0
+        )
 
     if prev_state == "MOVING" and new_state == "RESTING":
         parallel["elbow"].clear()
         parallel["trunk"].clear()
+        parallel["total_frames"] = 0
 
     return event, payload, visible, failed
 
@@ -246,6 +260,7 @@ def run_headless(video_path: str, exercise: str, scorer: str) -> None:
     config = None
     classifier = None
     correct_feature_ranges = None
+    required_roles = None
     if scorer == "rules":
         try:
             config = rules_module.load_config(exercise)
@@ -253,6 +268,7 @@ def run_headless(video_path: str, exercise: str, scorer: str) -> None:
             print(str(exc))
             cap.release()
             return
+        required_roles = rules_module.required_joint_roles()
     else:
         print(CLASSIFIER_WARNING)
         model_path = MODELS_DIR / f"{exercise}.pkl"
@@ -268,7 +284,7 @@ def run_headless(video_path: str, exercise: str, scorer: str) -> None:
             return
 
     detector = RepDetector()
-    parallel = {"elbow": [], "trunk": []}
+    parallel = {"elbow": [], "trunk": [], "total_frames": 0}
     smoothing_config = smoothing_module.load_config()
     smoother = smoothing_module.LandmarkSmoother(
         freq=smoothing_config["freq_hz"], min_cutoff=smoothing_config["min_cutoff"],
@@ -283,7 +299,9 @@ def run_headless(video_path: str, exercise: str, scorer: str) -> None:
         if not ok:
             break
         landmarks = get_pose_landmarks(frame)
-        event, payload, _visible, _failed = process_frame(detector, parallel, landmarks, exercise, smoother)
+        event, payload, _visible, _failed = process_frame(
+            detector, parallel, landmarks, exercise, smoother, required_roles,
+        )
 
         if event == "rep_complete":
             rep_count += 1
@@ -292,10 +310,11 @@ def run_headless(video_path: str, exercise: str, scorer: str) -> None:
                     "angle_deg": payload["angle_deg"],
                     "elbow_angle_deg": payload["elbow_angle_deg"],
                     "trunk_lean_deg": payload["trunk_lean_deg"],
+                    "valid_fraction": payload["valid_fraction"],
                 }
                 result = rules_module.score_rep(rep, config, fps)
-                status = "PASS" if result["passed"] else "FAIL"
-                print(f"Rep {rep_count}: {status}  failed_rules={result['failed_rules']}")
+                print(f"Rep {rep_count}: {result['status'].upper()}  failed_rules={result['failed_rules']}  "
+                      f"valid_fraction={result['valid_fraction']:.2f}")
                 for rule_id, r in result["rules"].items():
                     print(f"    {rule_id}: measured={r['measured']:.1f}  "
                           f"allowed=[{r['allowed'][0]:.1f}, {r['allowed'][1]:.1f}]  passed={r['passed']}")
@@ -367,13 +386,14 @@ if st.session_state.running:
     fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
     tracker = SessionTracker(user_id=user_id, exercise=exercise)
     detector = RepDetector()
-    parallel = {"elbow": [], "trunk": []}
+    parallel = {"elbow": [], "trunk": [], "total_frames": 0}
     smoothing_config = smoothing_module.load_config()
     smoother = smoothing_module.LandmarkSmoother(
         freq=smoothing_config["freq_hz"], min_cutoff=smoothing_config["min_cutoff"],
         beta=smoothing_config["beta"], d_cutoff=smoothing_config["d_cutoff"],
         max_hold_frames=smoothing_config["max_hold_frames"],
     )
+    required_roles = rules_module.required_joint_roles() if rules_config else None
     speech = SpeechFeedback()
     cue_cooldown = rules_module.CueCooldown(rules_config["cue_cooldown_s"]["value"]) if rules_config else None
     rep_count = 0
@@ -387,7 +407,9 @@ if st.session_state.running:
                 break
 
             landmarks = get_pose_landmarks(frame)
-            event, payload, visible, failed = process_frame(detector, parallel, landmarks, exercise, smoother)
+            event, payload, visible, failed = process_frame(
+                detector, parallel, landmarks, exercise, smoother, required_roles,
+            )
 
             if event == "rep_complete":
                 rep_count += 1
@@ -396,6 +418,7 @@ if st.session_state.running:
                         "angle_deg": payload["angle_deg"],
                         "elbow_angle_deg": payload["elbow_angle_deg"],
                         "trunk_lean_deg": payload["trunk_lean_deg"],
+                        "valid_fraction": payload["valid_fraction"],
                     }
                     result = rules_module.score_rep(rep, rules_config, fps)
                     side_value = Counter(payload["side"]).most_common(1)[0][0]
@@ -403,13 +426,21 @@ if st.session_state.running:
                         exercise=exercise,
                         side=side_value,
                         angle_deg=max(rep["angle_deg"]),
-                        is_correct=result["passed"],
+                        status=result["status"],
                         confidence=None,
                     ))
-                    status = "Good form!" if result["passed"] else "Needs adjustment: " + ", ".join(result["failed_rules"])
-                    last_message = f"Rep {rep_count}: {status}"
-                    last_is_correct = result["passed"]
-                    cues = cue_cooldown.cues_to_speak(result["failed_rules"], rules_config["cues"])
+                    if result["status"] == "insufficient_data":
+                        status_text = f"Not enough visible tracking to score this rep ({result['valid_fraction']:.0%} valid)."
+                    elif result["status"] == "pass":
+                        status_text = "Good form!"
+                    else:
+                        status_text = "Needs adjustment: " + ", ".join(result["failed_rules"])
+                    last_message = f"Rep {rep_count}: {status_text}"
+                    last_is_correct = {"pass": True, "fail": False, "insufficient_data": None}[result["status"]]
+                    cues = cue_cooldown.cues_to_speak(result["failed_rules"], rules_config["cues"]) if result["status"] == "fail" else []
+                    if result["status"] == "insufficient_data" and result["cue"] and cue_cooldown.should_fire("insufficient_data"):
+                        cues = [result["cue"]]
+                        cue_cooldown.record("insufficient_data")
                     for cue in cues:
                         speech.speak(cue)
                     if not cues:
@@ -424,7 +455,7 @@ if st.session_state.running:
                             exercise=exercise,
                             side=side_value,
                             angle_deg=agg["angle_max_deg"],
-                            is_correct=result["is_correct"],
+                            status="pass" if result["is_correct"] else "fail",
                             confidence=result["confidence"],
                         ))
                         last_message = f"Rep {rep_count}: {message_for_result(result, None)}"

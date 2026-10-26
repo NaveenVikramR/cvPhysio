@@ -17,6 +17,18 @@ EXERCISES = {
 LEFT = {"shoulder": 11, "elbow": 13, "wrist": 15, "hip": 23}
 RIGHT = {"shoulder": 12, "elbow": 14, "wrist": 16, "hip": 24}
 
+# Default joint roles required for each exercise's OWN primary angle
+# (compute_shoulder_abduction_angle / compute_shoulder_rotation_angle)
+# only -- NOT what a rules-based scorer needs, which depends on which
+# rules are active and is derived from there (see src/rules.py's
+# required_joint_roles()), not hardcoded here a second time. Used as the
+# fallback when no explicit required_roles is given, e.g. the classifier
+# scorer path, which never touches elbow/trunk features.
+BASE_REQUIRED_ROLES = {
+    "shoulder_abduction": {"shoulder", "elbow", "hip"},
+    "shoulder_rotation": {"shoulder", "elbow", "wrist", "hip"},
+}
+
 
 def compute_angle(a, b, c) -> float:
     """Angle at point b, in degrees, between vectors b->a and b->c.
@@ -155,11 +167,18 @@ def extract_rep_features(sequence_df: pd.DataFrame, angle_col: str = "angle_deg"
 
 
 def check_confidence(
-    landmarks: list[tuple[float, float, float, float]], side: dict[str, int], exercise: str
+    landmarks: list[tuple[float, float, float, float]], side: dict[str, int], exercise: str,
+    required_roles: set[str] | None = None,
 ) -> tuple[bool, list[int]]:
-    indices = [side["shoulder"], side["elbow"], side["hip"]]
-    if exercise == "shoulder_rotation":
-        indices.append(side["wrist"])
+    """required_roles, if given, overrides exercise's BASE_REQUIRED_ROLES
+    default -- pass src.rules.required_joint_roles() here so the gate
+    checks exactly the joints the active rules' features depend on,
+    instead of a second, independently-hardcoded list (that mismatch is
+    exactly what let a 0.11-visibility wrist corrupt elbow_straight
+    undetected before this was fixed).
+    """
+    roles = required_roles if required_roles is not None else BASE_REQUIRED_ROLES[exercise]
+    indices = [side[role] for role in roles]
     failed = [i for i in indices if landmarks[i][3] < MIN_VISIBILITY]
     return (len(failed) == 0, failed)
 
