@@ -49,6 +49,32 @@ class CorrectnessClassifier:
         self._is_fitted = True
 
 
+def compute_correct_feature_ranges(dataset: pd.DataFrame) -> dict:
+    """Per-feature (min, max) across only the "correct"-labeled training
+    rows. Used to flag a live prediction as outside anything the model was
+    actually shown as correct -- e.g. a healthy person's unusually full
+    range of motion, or an injured person's genuinely limited range, can
+    both fall outside this narrow healthy-volunteer band and get
+    confidently (and wrongly) called "incorrect" by the classifier alone.
+    """
+    correct_rows = dataset[dataset[LABEL_COLUMN]]
+    return {col: [float(correct_rows[col].min()), float(correct_rows[col].max())] for col in FEATURE_COLUMNS}
+
+
+def is_within_correct_range(features: dict, correct_feature_ranges: dict) -> bool:
+    """True only if every feature value falls within the training data's
+    observed "correct"-class range for that feature. False means the
+    classifier's label (whatever it predicted) isn't well supported by
+    what it actually saw labeled correct during training -- a reason to
+    treat the prediction with extra caution, not a reason to flip it.
+    """
+    return all(
+        lo <= features[col] <= hi
+        for col, (lo, hi) in correct_feature_ranges.items()
+        if col in features
+    )
+
+
 def cross_subject_split(
     dataset: pd.DataFrame, test_size: float = 0.2, random_state: int = 42
 ) -> tuple[pd.DataFrame, pd.DataFrame]:

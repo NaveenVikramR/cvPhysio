@@ -8,6 +8,7 @@ a whole rep's worth of frames aggregated via feature_extraction.extract_rep_
 features(), not a single frame's angle_deg.
 """
 
+import json
 import statistics
 from collections import Counter, deque
 from pathlib import Path
@@ -15,7 +16,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from src.classifier import CorrectnessClassifier
+from src.classifier import CorrectnessClassifier, is_within_correct_range
 from src.feature_extraction import (
     EXERCISES,
     check_confidence,
@@ -163,10 +164,14 @@ exercise = next(key for key, label in EXERCISES.items() if label == exercise_lab
 user_id = st.text_input("User ID", value="demo")
 
 model_path = MODELS_DIR / f"{exercise}.pkl"
+metadata_path = MODELS_DIR / f"{exercise}.metadata.json"
 classifier = None
+correct_feature_ranges = None
 if model_path.exists():
     classifier = CorrectnessClassifier()
     classifier.load(model_path)
+    if metadata_path.exists():
+        correct_feature_ranges = json.loads(metadata_path.read_text()).get("correct_feature_ranges")
 else:
     st.warning(f"No trained model at {model_path} — showing pose and angle only, no correctness label.")
 
@@ -222,6 +227,11 @@ if st.session_state.running:
                         confidence=result["confidence"],
                     ))
                     last_message = f"Rep {rep_count}: {message_for_result(result, None)}"
+                    if correct_feature_ranges and not is_within_correct_range(agg, correct_feature_ranges):
+                        last_message += (
+                            " (Note: this rep's motion was outside the range seen in training "
+                            "data labeled correct — treat this result with extra caution.)"
+                        )
                     last_is_correct = result["is_correct"]
                 else:
                     last_message = f"Rep {rep_count} complete — no trained model, correctness not shown."

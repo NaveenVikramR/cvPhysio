@@ -31,7 +31,13 @@ from sklearn.metrics import confusion_matrix, precision_recall_fscore_support
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.classifier import FEATURE_COLUMNS, GROUP_COLUMN, LABEL_COLUMN, CorrectnessClassifier
+from src.classifier import (
+    FEATURE_COLUMNS,
+    GROUP_COLUMN,
+    LABEL_COLUMN,
+    CorrectnessClassifier,
+    compute_correct_feature_ranges,
+)
 from src.dataset_loader import load_dataset_for_exercise
 
 RAW_DIR = "data/ui_prmd"
@@ -131,14 +137,19 @@ def run_loso(exercise: str, feature_source: str) -> CorrectnessClassifier:
 
     final_clf = CorrectnessClassifier(random_state=RANDOM_STATE)
     final_clf.train(dataset, dataset[LABEL_COLUMN])
-    return final_clf, summarize(rf_metrics), subjects
+    return final_clf, summarize(rf_metrics), subjects, dataset
 
 
 def save_model_with_metadata(clf: CorrectnessClassifier, exercise: str, feature_source: str,
-                              loso_summary: dict, subjects: list) -> None:
+                              loso_summary: dict, subjects: list, dataset) -> None:
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     model_path = MODELS_DIR / f"{exercise}.pkl"
     clf.save(model_path)
+
+    correct_feature_ranges = compute_correct_feature_ranges(dataset)
+    print(f"\n  correct_feature_ranges (training-data range of each feature, correct-labeled reps only):")
+    for col, (lo, hi) in correct_feature_ranges.items():
+        print(f"    {col}: [{lo:.1f}, {hi:.1f}]")
 
     metadata = {
         "exercise": exercise,
@@ -148,6 +159,7 @@ def save_model_with_metadata(clf: CorrectnessClassifier, exercise: str, feature_
         "n_subjects": len(subjects),
         "subjects": subjects,
         "loso_summary": {k: {"mean": v[0], "std": v[1]} for k, v in loso_summary.items()},
+        "correct_feature_ranges": correct_feature_ranges,
     }
     metadata_path = MODELS_DIR / f"{exercise}.metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2))
@@ -165,9 +177,9 @@ def main() -> None:
     for exercise in EXERCISES:
         print(f"\n{'=' * 70}\n{exercise}\n{'=' * 70}")
         for feature_source in sources:
-            clf, loso_summary, subjects = run_loso(exercise, feature_source)
+            clf, loso_summary, subjects, dataset = run_loso(exercise, feature_source)
             if feature_source == "fk_positions" or args.features == "angles_file":
-                save_model_with_metadata(clf, exercise, feature_source, loso_summary, subjects)
+                save_model_with_metadata(clf, exercise, feature_source, loso_summary, subjects, dataset)
             else:
                 print(f"\n  (not saving a model for {feature_source} -- app.py needs fk_positions; "
                       f"this run was for comparison only)")
