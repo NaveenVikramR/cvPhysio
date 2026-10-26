@@ -20,6 +20,7 @@ import pandas as pd
 import streamlit as st
 
 from src import rules as rules_module
+from src import smoothing as smoothing_module
 from src.classifier import CorrectnessClassifier, is_within_correct_range
 from src.feature_extraction import (
     EXERCISES,
@@ -179,7 +180,7 @@ class RepDetector:
         return f"Step back so your {label} stays visible, then hold still."
 
 
-def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: str):
+def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: str, smoother=None):
     """One frame through confidence-gating + RepDetector, plus a parallel
     elbow_angle_deg/trunk_lean_deg buffer kept aligned with RepDetector's
     own internal rep_buffer -- RepDetector only tracks a single angle_deg
@@ -188,11 +189,19 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
     mutated in place; on "rep_complete" the aligned sequences are added to
     the returned payload under "elbow_angle_deg"/"trunk_lean_deg".
 
+    `smoother`, if given (src.smoothing.LandmarkSmoother), runs between
+    pose and features: raw landmarks in, smoothed (or held-over, or None
+    if a dropout outlasted its hold budget) landmarks out, before any
+    angle is computed from them.
+
     Mirrors RepDetector.update()'s own append rule: a frame is part of
     the rep buffer iff it's visible AND (the detector was already MOVING,
     which also covers the final frame that completes the rep, OR this
     frame is the RESTING->MOVING transition itself).
     """
+    if smoother is not None:
+        landmarks = smoother.update(landmarks)
+
     visible, failed, features = False, [], None
     elbow_val = trunk_val = None
     if landmarks is not None:
@@ -260,6 +269,12 @@ def run_headless(video_path: str, exercise: str, scorer: str) -> None:
 
     detector = RepDetector()
     parallel = {"elbow": [], "trunk": []}
+    smoothing_config = smoothing_module.load_config()
+    smoother = smoothing_module.LandmarkSmoother(
+        freq=smoothing_config["freq_hz"], min_cutoff=smoothing_config["min_cutoff"],
+        beta=smoothing_config["beta"], d_cutoff=smoothing_config["d_cutoff"],
+        max_hold_frames=smoothing_config["max_hold_frames"],
+    )
     rep_count = 0
     print(f"Scoring {video_path} (exercise={exercise}, scorer={scorer}, fps={fps:.2f})")
 
@@ -268,7 +283,7 @@ def run_headless(video_path: str, exercise: str, scorer: str) -> None:
         if not ok:
             break
         landmarks = get_pose_landmarks(frame)
-        event, payload, _visible, _failed = process_frame(detector, parallel, landmarks, exercise)
+        event, payload, _visible, _failed = process_frame(detector, parallel, landmarks, exercise, smoother)
 
         if event == "rep_complete":
             rep_count += 1
@@ -353,6 +368,12 @@ if st.session_state.running:
     tracker = SessionTracker(user_id=user_id, exercise=exercise)
     detector = RepDetector()
     parallel = {"elbow": [], "trunk": []}
+    smoothing_config = smoothing_module.load_config()
+    smoother = smoothing_module.LandmarkSmoother(
+        freq=smoothing_config["freq_hz"], min_cutoff=smoothing_config["min_cutoff"],
+        beta=smoothing_config["beta"], d_cutoff=smoothing_config["d_cutoff"],
+        max_hold_frames=smoothing_config["max_hold_frames"],
+    )
     speech = SpeechFeedback()
     cue_cooldown = rules_module.CueCooldown(rules_config["cue_cooldown_s"]["value"]) if rules_config else None
     rep_count = 0
@@ -366,7 +387,7 @@ if st.session_state.running:
                 break
 
             landmarks = get_pose_landmarks(frame)
-            event, payload, visible, failed = process_frame(detector, parallel, landmarks, exercise)
+            event, payload, visible, failed = process_frame(detector, parallel, landmarks, exercise, smoother)
 
             if event == "rep_complete":
                 rep_count += 1
