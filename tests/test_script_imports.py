@@ -29,6 +29,7 @@ SCRIPT_MODULES = [
     "scripts.build_benchmark_config",
     "scripts.per_subject_fidelity",
     "scripts.derive_reference_tolerances",
+    "scripts.evaluate_reference_scoring",
     "scripts.evaluate_rules",
     "scripts.measure_smoothing_effect",
     "scripts.rotation_proxy_experiment",
