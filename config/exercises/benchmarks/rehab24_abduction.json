@@ -1,65 +1,74 @@
 {
   "exercise": "shoulder_abduction",
-  "notice": "Derived automatically from REHAB24-6 calibration-subject CORRECT reps (see derived_from below) -- a benchmark/reference config for scripts/benchmark_rehab24.py --config, NOT the live shipped config (config/exercises/shoulder_abduction.json is untouched by this file). A licensed physiotherapist must still review before any of this is used for real feedback.",
+  "notice": "Derived automatically from REHAB24-6 calibration-subject CORRECT reps, FRONT VIEW ONLY (see derived_from/views below) -- a benchmark/reference config for scripts/benchmark_rehab24.py --config, NOT the live shipped config (config/exercises/shoulder_abduction.json is untouched by this file). A licensed physiotherapist must still review before any of this is used for real feedback. n=15 reps -- BELOW the 30-rep caution threshold used when this file was generated.",
   "derived_from": "REHAB24-6 calibration subjects",
   "landmark_space": "world",
-  "n_reps": 58,
+  "n_reps": 15,
+  "n_reps_per_subject": {
+    "1": 10,
+    "2": 5
+  },
   "subjects": [
     1,
-    2,
-    6
+    2
+  ],
+  "views": [
+    "front"
+  ],
+  "cameras": [
+    "cam17"
   ],
   "date": "2026-10-27",
-  "commit": "b056da528e167f63a8e022bb50a8416771c1626e",
+  "commit": "670af65886dc5f7680b1c54bbb142be8a8e5ebf4",
   "percentiles": {
     "peak_angle": {
-      "p5": 37.96213804518469,
-      "median": 116.0863523198903,
-      "p95": 160.92224320298936
+      "p5": 115.0485162934208,
+      "median": 128.9427959801916,
+      "p95": 162.51041124010948
     },
     "elbow_min": {
-      "p5": 46.9050364147163,
-      "median": 135.4307277174113,
-      "p95": 142.87624968932374
+      "p5": 141.1719667198698,
+      "median": 143.37780002467534,
+      "p95": 146.2103345419214
     },
     "trunk_max": {
-      "p5": 8.63081853277686,
-      "median": 15.96133591238661,
-      "p95": 26.90195350070981
+      "p5": 15.691202849090086,
+      "median": 17.47479251708155,
+      "p95": 20.512189598893404
     },
     "tempo_s": {
-      "p5": 3.995,
-      "median": 5.983333333333333,
-      "p95": 8.071666666666667
+      "p5": 5.37,
+      "median": 6.366666666666666,
+      "p95": 8.12
     }
   },
   "target_peak_deg": {
-    "value": 99.4,
+    "value": 138.8,
     "status": "derived",
-    "comment": "(p5+p95)/2 of peak_angle across calibration-subject correct reps"
+    "comment": "(p5+p95)/2 of peak_angle across calibration-subject correct front-view reps"
   },
   "tolerance_deg": {
-    "value": 61.5,
+    "value": 23.7,
     "status": "derived",
     "comment": "(p95-p5)/2 of peak_angle, so [target-tolerance,target+tolerance]==[p5,p95]"
   },
   "min_elbow_straight_deg": {
-    "value": 46.9,
+    "value": 141.2,
     "status": "derived",
     "comment": "p5 of elbow_min (lower bound only)"
   },
   "max_trunk_lean_deg": {
-    "value": 26.9,
+    "value": 20.5,
     "status": "derived",
     "comment": "p95 of trunk_max (upper bound only)"
   },
   "tempo_min_s": {
-    "value": 4.0,
+    "value": 5.37,
     "status": "derived",
     "comment": "p5 of tempo_s"
   },
   "tempo_max_s": {
-    "value": 8.07,
+    "value": 8.12,
     "status": "derived",
     "comment": "p95 of tempo_s"
   },

@@ -1,16 +1,19 @@
 """Derives config/exercises/benchmarks/rehab24_abduction.json ONLY from
-calibration-subject CORRECT reps -- ALL cameras/views, matching the
-established calibration_percentiles() precedent in scripts/
-benchmark_rehab24.py (no camera/view restriction there either) -- under
-landmark_space=world (read from config/pose.json, NOT forced/mutated by
-this script; aborts if it isn't "world"). Calibration subjects only;
-evaluation subjects are never read. Does not run the full benchmark
-(scripts/benchmark_rehab24.py main()) -- reuses only its
-rep_feature_sequences() helper for calibration-subject correct reps.
-Does not touch config/exercises/shoulder_abduction.json.
+calibration-subject CORRECT reps, FRONT VIEW ONLY (view == "front" in
+data/rehab24_manifest.csv -- this excludes cam18 entirely and excludes
+half-profile/profile recordings on cam17, since mixing camera angles
+into one percentile pool was found to make the derived peak_angle rule
+nearly a no-op: see the previous, all-cameras version of this file's
+commit message). Annotated rep boundaries, under landmark_space=world
+(read from config/pose.json, NOT forced/mutated by this script; aborts
+if it isn't "world"). Calibration subjects only; evaluation subjects
+are never read. Does not run the full benchmark (scripts/
+benchmark_rehab24.py main()) -- reuses only its rep_feature_sequences()
+helper for calibration-subject correct front-view reps. Does not touch
+config/exercises/shoulder_abduction.json.
 
 Allowed range per rule = [p5, p95] of the measured feature across those
-58 reps' annotated spans:
+front-view reps' annotated spans:
   - peak_angle: target_peak_deg=(p5+p95)/2, tolerance_deg=(p95-p5)/2,
     so [target-tolerance, target+tolerance] == [p5, p95] exactly.
   - elbow_straight: LOWER bound only = p5 of elbow_min.
@@ -21,9 +24,12 @@ over unchanged from config/exercises/shoulder_abduction.json's own
 operational defaults, since this benchmark config still needs them to
 be loadable by src/rules.py's score_rep().
 
-Output: config/exercises/benchmarks/rehab24_abduction.json, with n
-reps, subjects, date, commit hash and "derived_from" recorded inside
-the file.
+Prints n reps per subject, n total, the percentile table, and a
+WARNING if total n < 30 (small-sample caveat -- front view alone is a
+much smaller slice of the calibration data than all cameras/views
+combined). Output: config/exercises/benchmarks/rehab24_abduction.json,
+with n, subjects, views, date, commit hash and "derived_from" recorded
+inside the file.
 """
 
 import json
@@ -39,12 +45,17 @@ from scripts.benchmark_rehab24 import DATA_DIR, git_provenance, load_manifest_an
 from src import pose_estimation
 
 OUTPUT_PATH = Path("config/exercises/benchmarks/rehab24_abduction.json")
+MIN_N_WARNING = 30
 
 
-def collect_calibration_correct_rep_features(manifest: pd.DataFrame, split: dict) -> pd.DataFrame:
-    calib_correct = manifest[manifest["subject"].isin(split["calibration_subjects"]) & (manifest["label"] == "correct")]
+def collect_calibration_correct_front_rep_features(manifest: pd.DataFrame, split: dict) -> pd.DataFrame:
+    calib_correct_front = manifest[
+        manifest["subject"].isin(split["calibration_subjects"])
+        & (manifest["label"] == "correct")
+        & (manifest["view"] == "front")
+    ]
     rows = []
-    for _, rep in calib_correct.iterrows():
+    for _, rep in calib_correct_front.iterrows():
         video_path = DATA_DIR / "videos" / rep["video"]
         if not video_path.exists():
             continue
@@ -71,15 +82,25 @@ def main() -> None:
     manifest, split = load_manifest_and_split()
     print(f"Calibration subjects: {split['calibration_subjects']} (evaluation subjects never read)")
 
-    print("Computing per-rep features for every calibration-subject CORRECT rep (all cameras/views)...")
-    df = collect_calibration_correct_rep_features(manifest, split)
+    print("Computing per-rep features for every calibration-subject CORRECT front-view rep "
+          "(camera==cam17, view=='front' only -- cam18 and half-profile/profile excluded)...")
+    df = collect_calibration_correct_front_rep_features(manifest, split)
     if df.empty:
-        print("No calibration-subject correct reps produced usable features -- nothing written.")
+        print("No calibration-subject correct front-view reps produced usable features -- nothing written.")
         return
 
     subjects_used = sorted(int(s) for s in df["subject"].unique())
-    print(f"\n{len(df)} calibration-subject CORRECT reps used, subjects: {subjects_used}")
-    print(df.groupby(["subject", "camera", "view"]).size().to_string())
+    views_used = sorted(df["view"].unique().tolist())
+    cameras_used = sorted(df["camera"].unique().tolist())
+    print(f"\n{len(df)} calibration-subject CORRECT front-view reps used, subjects: {subjects_used}, "
+          f"views: {views_used}, cameras: {cameras_used}")
+    print("n reps per subject:")
+    per_subject_counts = df.groupby("subject").size()
+    print(per_subject_counts.to_string())
+    if len(df) < MIN_N_WARNING:
+        print(f"\nWARNING: total n={len(df)} < {MIN_N_WARNING} -- front-view-only calibration data is small. "
+              "Percentiles below (especially p5/p95) are based on very few reps and should be treated with "
+              "proportional caution.")
 
     percentiles = {}
     print("\n| feature | n | p5 | median | p95 |")
@@ -94,19 +115,25 @@ def main() -> None:
 
     config = {
         "exercise": "shoulder_abduction",
-        "notice": "Derived automatically from REHAB24-6 calibration-subject CORRECT reps (see derived_from "
-                  "below) -- a benchmark/reference config for scripts/benchmark_rehab24.py --config, NOT the "
-                  "live shipped config (config/exercises/shoulder_abduction.json is untouched by this file). "
-                  "A licensed physiotherapist must still review before any of this is used for real feedback.",
+        "notice": "Derived automatically from REHAB24-6 calibration-subject CORRECT reps, FRONT VIEW ONLY "
+                  "(see derived_from/views below) -- a benchmark/reference config for scripts/"
+                  "benchmark_rehab24.py --config, NOT the live shipped config "
+                  "(config/exercises/shoulder_abduction.json is untouched by this file). A licensed "
+                  "physiotherapist must still review before any of this is used for real feedback. "
+                  f"n={len(df)} reps -- {'BELOW' if len(df) < MIN_N_WARNING else 'at/above'} the "
+                  f"{MIN_N_WARNING}-rep caution threshold used when this file was generated.",
         "derived_from": "REHAB24-6 calibration subjects",
         "landmark_space": landmark_space,
         "n_reps": len(df),
+        "n_reps_per_subject": {str(s): int(c) for s, c in per_subject_counts.items()},
         "subjects": subjects_used,
+        "views": views_used,
+        "cameras": cameras_used,
         "date": date.today().isoformat(),
         "commit": commit,
         "percentiles": percentiles,
         "target_peak_deg": {"value": round(target_peak, 1), "status": "derived",
-                             "comment": "(p5+p95)/2 of peak_angle across calibration-subject correct reps"},
+                             "comment": "(p5+p95)/2 of peak_angle across calibration-subject correct front-view reps"},
         "tolerance_deg": {"value": round(tolerance, 1), "status": "derived",
                            "comment": "(p95-p5)/2 of peak_angle, so [target-tolerance,target+tolerance]==[p5,p95]"},
         "min_elbow_straight_deg": {"value": round(percentiles["elbow_min"]["p5"], 1), "status": "derived",
