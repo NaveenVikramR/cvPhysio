@@ -33,7 +33,7 @@ from src.feature_extraction import (
     extract_rep_features,
     select_side,
 )
-from src.feedback import LANDMARK_LABELS, SpeechFeedback, draw_overlay, message_for_result
+from src.feedback import LANDMARK_LABELS, SpeechFeedback, draw_overlay, message_for_result, message_for_rules_result
 from src.pose_estimation import get_pose_landmarks, open_webcam
 from src.tracking import DiscardRecord, RepRecord, SessionTracker
 
@@ -385,8 +385,10 @@ def run_headless(video_path: str, exercise: str, scorer: str) -> None:
     detector = RepDetector()
     parallel = {"elbow": [], "trunk": [], "total_frames": 0}
     smoother = build_smoother()
+    cue_cooldown = rules_module.CueCooldown(config["cue_cooldown_s"]["value"]) if scorer == "rules" else None
     rep_count = 0
     frame_idx = 0
+    last_hint_printed = None
     print(f"Scoring {video_path} (exercise={exercise}, scorer={scorer}, fps={fps:.2f}, smoothing={'on' if smoother else 'off'})")
 
     while True:
@@ -399,6 +401,14 @@ def run_headless(video_path: str, exercise: str, scorer: str) -> None:
         event, payload, _visible, _failed = process_frame(
             detector, parallel, landmarks, exercise, smoother, t, required_roles,
         )
+
+        if detector.state == "CALIBRATING":
+            hint = detector.calibration_hint()
+            if hint and hint != last_hint_printed:
+                print(f"  (calibration stalled at t={t:.1f}s: {hint})")
+                last_hint_printed = hint
+        else:
+            last_hint_printed = None
 
         if event == "rep_complete":
             rep_count += 1
@@ -415,6 +425,13 @@ def run_headless(video_path: str, exercise: str, scorer: str) -> None:
                 for rule_id, r in result["rules"].items():
                     print(f"    {rule_id}: measured={r['measured']:.1f}  "
                           f"allowed=[{r['allowed'][0]:.1f}, {r['allowed'][1]:.1f}]  passed={r['passed']}")
+                print(f"    message: {message_for_rules_result(result)}")
+                cues = cue_cooldown.cues_to_speak(result["failed_rules"], config["cues"], now=t) if result["status"] == "fail" else []
+                if result["status"] == "insufficient_data" and result["cue"] and cue_cooldown.should_fire("insufficient_data", now=t):
+                    cues = [result["cue"]]
+                    cue_cooldown.record("insufficient_data", now=t)
+                if cues:
+                    print(f"    cues: {cues}")
             else:
                 agg = extract_rep_features(pd.DataFrame({"angle_deg": payload["angle_deg"]}))
                 result = classifier.predict(agg) if classifier else None
@@ -520,13 +537,7 @@ if st.session_state.running:
                         status=result["status"],
                         confidence=None,
                     ))
-                    if result["status"] == "insufficient_data":
-                        status_text = f"Not enough visible tracking to score this rep ({result['valid_fraction']:.0%} valid)."
-                    elif result["status"] == "pass":
-                        status_text = "Good form!"
-                    else:
-                        status_text = "Needs adjustment: " + ", ".join(result["failed_rules"])
-                    last_message = f"Rep {rep_count}: {status_text}"
+                    last_message = f"Rep {rep_count}: {message_for_rules_result(result)}"
                     last_is_correct = {"pass": True, "fail": False, "insufficient_data": None}[result["status"]]
                     cues = cue_cooldown.cues_to_speak(result["failed_rules"], rules_config["cues"]) if result["status"] == "fail" else []
                     if result["status"] == "insufficient_data" and result["cue"] and cue_cooldown.should_fire("insufficient_data"):

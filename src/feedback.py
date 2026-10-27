@@ -48,3 +48,15 @@ def message_for_result(result: dict | None, failed_landmarks: list[int] | None =
     if result is None:
         return low_visibility_message(failed_landmarks or [])
     return CORRECT_MESSAGE if result["is_correct"] else INCORRECT_MESSAGE
+
+
+def message_for_rules_result(result: dict) -> str:
+    """The one status-text builder for src.rules.score_rep()'s 3-way
+    result, shared by app.py's Streamlit path and run_headless() --
+    previously each built this text inline, independently, and could
+    drift apart (see open_questions.md #7)."""
+    if result["status"] == "insufficient_data":
+        return f"Not enough visible tracking to score this rep ({result['valid_fraction']:.0%} valid)."
+    if result["status"] == "pass":
+        return "Good form!"
+    return "Needs adjustment: " + ", ".join(result["failed_rules"])
