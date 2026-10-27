@@ -30,6 +30,8 @@ SCRIPT_MODULES = [
     "scripts.per_subject_fidelity",
     "scripts.derive_reference_tolerances",
     "scripts.evaluate_reference_scoring",
+    "scripts.evaluate_oracle_ceiling",
+    "scripts.build_review3_summary",
     "scripts.evaluate_rules",
     "scripts.measure_smoothing_effect",
     "scripts.rotation_proxy_experiment",
