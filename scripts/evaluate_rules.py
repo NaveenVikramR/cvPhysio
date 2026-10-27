@@ -25,6 +25,7 @@ results/rules_eval.csv (one row per scored rep).
 import csv
 import math
 import statistics
+import subprocess
 import sys
 import time
 from collections import Counter, defaultdict, deque
@@ -48,6 +49,23 @@ FAULT_TO_RULE = {
     "fault_elbow": "elbow_straight",
     "fault_fast": "tempo",
 }
+
+
+def git_provenance() -> tuple[str, bool]:
+    """(commit_hash, is_dirty) for the current working tree, so every
+    results file records exactly what code produced it. Returns
+    ("unknown", True) if git isn't available or this isn't a repo --
+    missing provenance shouldn't fail the whole run."""
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], capture_output=True, text=True, check=True,
+        ).stdout
+        return commit, bool(status.strip())
+    except Exception:
+        return "unknown", True
 
 
 def load_rep_detector_and_process_frame():
@@ -142,6 +160,8 @@ def measure_fps(clip_path: str, exercise: str, config: dict, required_roles, Rep
 
 def main() -> None:
     RESULTS_DIR.mkdir(exist_ok=True)
+    commit, dirty = git_provenance()
+    print(f"Provenance: commit={commit}  dirty={dirty}")
     rows = read_manifest(MANIFEST_PATH)
     if not rows:
         print(f"No manifest found at {MANIFEST_PATH} -- nothing to evaluate.")
@@ -216,6 +236,7 @@ def main() -> None:
     csv_path = RESULTS_DIR / "rules_eval.csv"
     if csv_rows:
         with csv_path.open("w", newline="") as f:
+            f.write(f"# commit: {commit}\n# dirty: {dirty}\n")
             writer = csv.DictWriter(f, fieldnames=list(csv_rows[0].keys()))
             writer.writeheader()
             writer.writerows(csv_rows)
@@ -264,6 +285,7 @@ def main() -> None:
     # ---- build markdown report ----
     lines = []
     lines.append("# src/rules.py evaluation\n")
+    lines.append(f"_commit: `{commit}` (working tree {'dirty' if dirty else 'clean'})_\n")
     lines.append(f"Manifest: `{MANIFEST_PATH}` -- {len(rows)} rows, {len(usable)} usable, {len(missing)} missing.\n")
 
     if missing:
