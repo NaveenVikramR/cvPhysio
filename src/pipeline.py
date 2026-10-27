@@ -1,14 +1,16 @@
 """Shared live-pipeline orchestration: RepDetector (the rep-boundary
 state machine), process_frame() (one frame through confidence-gating +
 NaN guard + RepDetector, keeping the elbow/trunk parallel buffers
-aligned), build_smoother(), and load_classifier_for_live_use() (the
-classifier + metadata guard). No Streamlit, no cv2 window/webcam code,
-no work at import time -- app.py and every scripts/*.py diagnostic that
-needs RepDetector/process_frame import directly from here, instead of
-each independently exec()-slicing these out of app.py's source text
-(the previous approach, dropped because every new name this code
-referenced had to be re-added to every single loader's namespace by
-hand, and frequently wasn't).
+aligned), build_smoother(), load_classifier_for_live_use() (the
+classifier + metadata guard), and Session (the Start/Stop session
+lifecycle that gates whether a frame ever reaches RepDetector at all).
+No Streamlit, no cv2 window/webcam code, no work at import time --
+app.py and every scripts/*.py diagnostic that needs RepDetector/
+process_frame import directly from here, instead of each independently
+exec()-slicing these out of app.py's source text (the previous
+approach, dropped because every new name this code referenced had to
+be re-added to every single loader's namespace by hand, and frequently
+wasn't).
 """
 
 import json
@@ -320,3 +322,73 @@ def load_classifier_for_live_use(
     classifier = CorrectnessClassifier()
     classifier.load(model_path)
     return classifier, metadata.get("correct_feature_ranges")
+
+
+# ===========================================================================
+# Start/Stop session lifecycle
+# ===========================================================================
+
+class SessionState:
+    """IDLE -> CALIBRATING -> ACTIVE -> STOPPED. CALIBRATING/ACTIVE are
+    DERIVED from RepDetector's own, unmodified internal state (CALIBRATING
+    mirrors RepDetector.state == "CALIBRATING"; ACTIVE covers both RESTING
+    and MOVING) -- Session adds no new segmentation logic of its own, it
+    only decides whether a frame reaches RepDetector.update() at all.
+    """
+    IDLE = "IDLE"
+    CALIBRATING = "CALIBRATING"
+    ACTIVE = "ACTIVE"
+    STOPPED = "STOPPED"
+
+
+class Session:
+    """Wraps one RepDetector with a Start/Stop lifecycle: IDLE ->
+    CALIBRATING -> ACTIVE -> STOPPED. Frames fed in while IDLE or
+    STOPPED are ignored by the rep detector entirely -- they never reach
+    RepDetector.update() or process_frame() -- so a frame before Start
+    or after Stop can never be counted into a rep, discarded, or used
+    for calibration. start() constructs a fresh RepDetector and begins
+    calibration (the exact same CALIBRATING behavior RepDetector always
+    had); stop() is a one-way transition to STOPPED (no restart).
+    app.py's Streamlit Start/Stop buttons and --span (headless mode)
+    both drive this same class, so "pressing Start/Stop" and "--span
+    START END" are the same mechanism, not two independent ones.
+    """
+
+    def __init__(self, exercise: str):
+        self.exercise = exercise
+        self.detector: RepDetector | None = None
+        self.parallel: dict | None = None
+        self._stopped = False
+
+    @property
+    def session_state(self) -> str:
+        if self._stopped:
+            return SessionState.STOPPED
+        if self.detector is None:
+            return SessionState.IDLE
+        return SessionState.CALIBRATING if self.detector.state == "CALIBRATING" else SessionState.ACTIVE
+
+    def start(self) -> None:
+        """IDLE -> CALIBRATING. A no-op once already started (CALIBRATING/
+        ACTIVE) or stopped -- there is no restart after Stop."""
+        if self.session_state != SessionState.IDLE:
+            return
+        self.detector = RepDetector()
+        self.parallel = {"elbow": [], "trunk": [], "total_frames": 0}
+
+    def stop(self) -> None:
+        """CALIBRATING/ACTIVE -> STOPPED. One-way, idempotent."""
+        self._stopped = True
+
+    def process_frame(self, landmarks, smoother=None, t: float | None = None,
+                       required_roles: set[str] | None = None):
+        """Same return shape as the module-level process_frame():
+        (event, payload, visible, failed). While IDLE or STOPPED, returns
+        ("idle", None, False, []) without calling RepDetector/
+        process_frame() at all -- the frame is ignored, not merely
+        discarded after being looked at.
+        """
+        if self.session_state in (SessionState.IDLE, SessionState.STOPPED):
+            return "idle", None, False, []
+        return process_frame(self.detector, self.parallel, landmarks, self.exercise, smoother, t, required_roles)

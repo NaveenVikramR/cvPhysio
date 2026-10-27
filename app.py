@@ -24,10 +24,9 @@ from src.feature_extraction import EXERCISES, extract_rep_features
 from src.feedback import SpeechFeedback, draw_overlay, message_for_result, message_for_rules_result
 from src.pipeline import (
     MODELS_DIR,
-    RepDetector,
+    Session,
     build_smoother,
     load_classifier_for_live_use,
-    process_frame,
 )
 from src.pose_estimation import get_pose_landmarks, open_webcam
 from src.statuses import RuleStatus
@@ -46,13 +45,27 @@ def parse_args():
     parser.add_argument("--video", type=str, default=None,
                          help="Path to a video file to score headlessly instead of launching the Streamlit webcam UI.")
     parser.add_argument("--exercise", choices=list(EXERCISES), default="shoulder_abduction")
+    parser.add_argument("--span", type=int, nargs=2, default=None, metavar=("START", "END"),
+                         help="Frame indices [START, END] (inclusive), only with --video: equivalent to "
+                              "pressing Start at frame START and Stop right after frame END. Frames "
+                              "outside the span are ignored by the rep detector (src.pipeline.Session). "
+                              "Omit to score the whole clip (Start before frame 0, never Stop) -- the "
+                              "pre-this-flag behavior.")
     return parser.parse_args(sys.argv[1:])
 
 
-def run_headless(video_path: str, exercise: str, scorer: str) -> None:
+def run_headless(video_path: str, exercise: str, scorer: str, span: tuple[int, int] | None = None) -> None:
     """--video path: score a video file frame-by-frame with no Streamlit
     UI, printing per-rep results to stdout. Used for verification against
-    real recorded clips (no webcam available in that context)."""
+    real recorded clips (no webcam available in that context).
+
+    `span`, if given, is (start_frame, end_frame) inclusive: Session.
+    start() is called exactly at frame_idx == start_frame, Session.
+    stop() right after processing frame_idx == end_frame -- frames
+    outside that span are ignored by the rep detector entirely. If
+    omitted, Session.start() is called before frame 0 and never
+    stopped, which is exactly the pre-this-flag behavior (every frame
+    reaches the rep detector)."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         print(f"Could not open video: {video_path}")
@@ -84,28 +97,32 @@ def run_headless(video_path: str, exercise: str, scorer: str) -> None:
             cap.release()
             return
 
-    detector = RepDetector()
-    parallel = {"elbow": [], "trunk": [], "total_frames": 0}
+    session = Session(exercise)
     smoother = build_smoother()
     cue_cooldown = rules_module.CueCooldown(config["cue_cooldown_s"]["value"]) if scorer == "rules" else None
     rep_count = 0
     frame_idx = 0
     last_hint_printed = None
-    print(f"Scoring {video_path} (exercise={exercise}, scorer={scorer}, fps={fps:.2f}, smoothing={'on' if smoother else 'off'})")
+    if span is None:
+        session.start()  # Start before frame 0, never Stop -- identical to the pre-this-flag behavior
+    print(f"Scoring {video_path} (exercise={exercise}, scorer={scorer}, fps={fps:.2f}, smoothing={'on' if smoother else 'off'}"
+          f"{f', span={span}' if span else ''})")
 
     while True:
         ok, frame = cap.read()
         if not ok:
             break
         t = frame_idx / fps
-        frame_idx += 1
+        if span is not None and frame_idx == span[0]:
+            session.start()
         landmarks = get_pose_landmarks(frame)
-        event, payload, _visible, _failed = process_frame(
-            detector, parallel, landmarks, exercise, smoother, t, required_roles,
-        )
+        event, payload, _visible, _failed = session.process_frame(landmarks, smoother, t, required_roles)
+        if span is not None and frame_idx == span[1]:
+            session.stop()
+        frame_idx += 1
 
-        if detector.state == "CALIBRATING":
-            hint = detector.calibration_hint()
+        if session.detector is not None and session.detector.state == "CALIBRATING":
+            hint = session.detector.calibration_hint()
             if hint and hint != last_hint_printed:
                 print(f"  (calibration stalled at t={t:.1f}s: {hint})")
                 last_hint_printed = hint
@@ -157,7 +174,7 @@ if __name__ == "__main__":
     ARGS = parse_args()
 
     if ARGS.video:
-        run_headless(ARGS.video, ARGS.exercise, ARGS.scorer)
+        run_headless(ARGS.video, ARGS.exercise, ARGS.scorer, tuple(ARGS.span) if ARGS.span else None)
         raise SystemExit(0)
 
     st.set_page_config(page_title="cvPhysio", layout="centered")
@@ -202,8 +219,8 @@ if __name__ == "__main__":
         capture = open_webcam()
         fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
         tracker = SessionTracker(user_id=user_id, exercise=exercise)
-        detector = RepDetector()
-        parallel = {"elbow": [], "trunk": [], "total_frames": 0}
+        session = Session(exercise)
+        session.start()  # "Start session" button already gated entry into this block -- begin calibrating now
         smoother = build_smoother()
         required_roles = rules_module.required_joint_roles() if rules_config else None
         speech = SpeechFeedback()
@@ -220,9 +237,7 @@ if __name__ == "__main__":
 
                 landmarks = get_pose_landmarks(frame)
                 t = time.monotonic()  # live webcam: real arrival time, not an assumed fixed rate
-                event, payload, visible, failed = process_frame(
-                    detector, parallel, landmarks, exercise, smoother, t, required_roles,
-                )
+                event, payload, visible, failed = session.process_frame(landmarks, smoother, t, required_roles)
 
                 if event == "rep_complete":
                     rep_count += 1
@@ -284,7 +299,10 @@ if __name__ == "__main__":
                     ))
                     st.warning(payload["message"])
 
-                stall_hint = detector.calibration_hint() if detector.state == "CALIBRATING" else None
+                stall_hint = (
+                    session.detector.calibration_hint()
+                    if session.detector is not None and session.detector.state == "CALIBRATING" else None
+                )
                 if stall_hint:
                     # Stable, actionable hint once stuck calibrating -- takes
                     # priority over the flickery per-frame low-visibility message.
@@ -293,9 +311,9 @@ if __name__ == "__main__":
                     message, overlay_is_correct = "No person detected.", None
                 elif not visible:
                     message, overlay_is_correct = message_for_result(None, failed), None
-                elif detector.state == "CALIBRATING":
+                elif session.detector is not None and session.detector.state == "CALIBRATING":
                     message, overlay_is_correct = "Calibrating rest position — please hold still...", None
-                elif detector.state == "MOVING":
+                elif session.detector is not None and session.detector.state == "MOVING":
                     message, overlay_is_correct = "Repetition in progress...", None
                 else:  # RESTING
                     message, overlay_is_correct = last_message, last_is_correct
@@ -304,6 +322,7 @@ if __name__ == "__main__":
                 annotated = draw_overlay(frame, message, overlay_is_correct)
                 frame_slot.image(annotated, channels="BGR")
         finally:
+            session.stop()  # loop exited (camera failure, or "Stop session" interrupting this script run)
             capture.release()
             if tracker.reps or tracker.discards:
                 tracker.save()
