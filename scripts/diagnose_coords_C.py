@@ -1,28 +1,33 @@
-"""STEP 1 of the coordinate-space follow-up task: characterise variant C
-(MediaPipe world/metric landmarks) vs mocap in more depth than results/
-diag_coords.md did. ANALYSIS ONLY -- no src/, config/ or threshold
-changes. Calibration subjects [1, 2, 6], front camera (cam17) only
-(subject 6 has no cam17-front recording in this dataset -- see PART 1's
-own printed note -- so every number here is actually drawn from subjects
-1 and 2's 3 front-view recordings: PM_000, PM_001, PM_012). Evaluation
-subjects are never read.
+"""Reconciles results/diag_coords_C.md: the first version of this script
+computed "peak_bias" from a GLOBAL per-recording excursion threshold
+(mocap_angle within 5 deg of that recording's own max), which is a
+DIFFERENT definition than scripts/diagnose_coord_space.py's original
+per-rep peak_bias (one point per annotated rep, at that rep's own true
+mocap-angle maximum, pooled over reps) -- that mismatch, not a labelling
+error in the earlier offset number, is why -14.86 (global mean error)
+didn't sit between -9.51 (rest) and the first version's +3.35 (global-
+threshold "peak"): they were never measuring the same frame population.
+This version uses ONE definition throughout, matching the original
+diagnose_coord_space.py: rest = frames within 5 deg of the pooled
+recording-wide mocap-angle minimum; peak = one frame per annotated rep,
+at that rep's own mocap-angle maximum within its [start_frame,end_frame]
+span (ALL annotated reps, correct AND incorrect -- camera/view-filtered
+only, same as the original). See PART 1's own explanation paragraph.
 
-Reuses the per-frame variant-C/mocap series already computed and cached
-by scripts/diagnose_coord_space.py at results/diag/coords_{video_id}.csv
-(regenerates them via that script's own full_recording_variants() if a
-cache file is missing), instead of re-running MediaPipe inference a
-second time for numbers that script already produced.
+ANALYSIS ONLY -- no src/, config/ or threshold changes. Calibration
+subjects [1, 2, 6], front camera (cam17) only; subject 6 has no cam17/
+front recording in this dataset (confirmed below), so every number here
+is drawn only from subjects 1 and 2. Evaluation subjects are never read.
+Does not start any benchmark.
 
-PART 1: frame-level fit (slope, intercept, r, bias at rest/peak,
-residual std after the linear fit), plus the MAE split into a constant
-offset component and a random-error component after removing it.
-PART 2: per-rep paired differences (peak angle, elbow minimum, trunk-
-lean max, tempo) vs mocap, per subject, over ALL annotated reps
-(correct AND incorrect -- not restricted to correct reps, since PART 3
-needs both labels anyway and this step is a fuller characterisation
-than diag_coords.md's correct-only table).
-PART 3: AUC of each feature for correct-vs-incorrect discrimination
-under variant C, same (subjects, camera, view) restriction.
+PART 1: ONE table (fit slope/intercept, mean error, error std, MAE, MAE
+after subtracting the mean error, rest bias, peak bias, with n stated
+for each), plus the reconciliation explanation above.
+PART 2: for peak angle, elbow min, trunk max, under mocap AND under
+variant C: reps per subject per label, per-subject AUC (correct vs
+incorrect, computed WITHIN each subject separately, not pooled across
+subjects) and the mean of those per-subject AUCs -- flags any subject
+with only one label (AUC undefined for that subject/feature).
 
 Output: results/diag_coords_C.md (commit hash + dirty flag at the top).
 """
@@ -45,7 +50,7 @@ from scripts.diagnose_rehab24 import CALIBRATION_SUBJECTS
 RESULTS_DIR = Path("results")
 DIAG_DIR = RESULTS_DIR / "diag"
 VARIANT = "C_world"
-ADOPTION_MAE_MAX = 10.0  # the PART 3 rule from the earlier task -- NOT met by C, restated here for reference only
+FEATURES = ("peak_angle", "elbow_min", "trunk_max")
 
 
 def load_or_build_recording_df(video_id: str, video_filename: str) -> pd.DataFrame:
@@ -67,44 +72,60 @@ def recording_fps(video_filename: str) -> float:
 
 
 # ===========================================================================
-# PART 1 -- frame-level fit + MAE split (offset vs random error)
+# PART 1 -- ONE reconciled frame-level table
 # ===========================================================================
 
-def frame_level_fit_with_offset_split(all_df: pd.DataFrame) -> dict:
+def frame_level_table(all_df: pd.DataFrame, annotated_reps: pd.DataFrame) -> dict:
     mp_arr = all_df[f"{VARIANT}_angle"].to_numpy()
     mocap_arr = all_df["mocap_angle"].to_numpy()
     valid = ~np.isnan(mp_arr) & ~np.isnan(mocap_arr)
     mp_v, mocap_v = mp_arr[valid], mocap_arr[valid]
 
     fit = scipy_stats.linregress(mocap_v, mp_v)
-    residuals = mp_v - (fit.slope * mocap_v + fit.intercept)
     diff = mp_v - mocap_v
-    mae_total = float(np.mean(np.abs(diff)))
-    offset = float(np.mean(diff))  # constant (mean) error -- a pure bias
-    mae_after_offset_removed = float(np.mean(np.abs(diff - offset)))  # what's left once the bias is subtracted
+    mean_error = float(np.mean(diff))
+    error_std = float(np.std(diff))
+    mae = float(np.mean(np.abs(diff)))
+    mae_after_mean_removed = float(np.mean(np.abs(diff - mean_error)))
 
+    # rest: pooled-recording definition, as in diagnose_coord_space.py
     rest_threshold = np.nanmin(mocap_arr) + 5.0
     rest_mask = valid & (mocap_arr <= rest_threshold)
     rest_bias = float(np.mean(mp_arr[rest_mask] - mocap_arr[rest_mask])) if rest_mask.sum() else None
+    rest_n = int(rest_mask.sum())
 
-    peak_mask = valid & (mocap_arr >= np.nanmax(mocap_arr) - 5.0)
-    peak_bias = float(np.mean(mp_arr[peak_mask] - mocap_arr[peak_mask])) if peak_mask.sum() else None
+    # peak: ONE frame per annotated rep (its own mocap-angle maximum within
+    # [start_frame, end_frame]) -- matches diagnose_coord_space.py exactly,
+    # NOT a global per-recording excursion threshold (that was the bug in
+    # the first version of this script -- see module docstring).
+    peak_diffs = []
+    for _, rep in annotated_reps.iterrows():
+        s, e = int(rep["start_frame"]), min(int(rep["end_frame"]), len(mocap_arr) - 1)
+        if e <= s:
+            continue
+        seg = mocap_arr[s:e + 1]
+        if np.all(np.isnan(seg)):
+            continue
+        peak_local = s + int(np.nanargmax(seg))
+        if peak_local < len(mp_arr) and not np.isnan(mp_arr[peak_local]):
+            peak_diffs.append(mp_arr[peak_local] - mocap_arr[peak_local])
+    peak_bias = float(np.mean(peak_diffs)) if peak_diffs else None
+    peak_n = len(peak_diffs)
 
     return {
         "n": int(valid.sum()), "slope": round(fit.slope, 3), "intercept": round(fit.intercept, 1),
-        "r": round(fit.rvalue, 3), "residual_std": round(float(residuals.std()), 2),
-        "mae_total": round(mae_total, 2), "offset_bias": round(offset, 2),
-        "mae_after_offset_removed": round(mae_after_offset_removed, 2),
-        "rest_bias": round(rest_bias, 2) if rest_bias is not None else None,
-        "peak_bias": round(peak_bias, 2) if peak_bias is not None else None,
+        "mean_error": round(mean_error, 2), "error_std": round(error_std, 2),
+        "mae": round(mae, 2), "mae_after_mean_removed": round(mae_after_mean_removed, 2),
+        "rest_bias": round(rest_bias, 2) if rest_bias is not None else None, "rest_n": rest_n,
+        "peak_bias": round(peak_bias, 2) if peak_bias is not None else None, "peak_n": peak_n,
     }
 
 
 # ===========================================================================
-# PART 2 -- per-rep paired differences, per subject, all labels
+# PART 2 -- per-rep features, per-subject AUC (not pooled)
 # ===========================================================================
 
-def per_rep_features_for_recording(df: pd.DataFrame, reps: pd.DataFrame, fps: float) -> list[dict]:
+def per_rep_features_for_recording(df: pd.DataFrame, reps: pd.DataFrame) -> list[dict]:
     mocap_angle, mocap_elbow, mocap_trunk = df["mocap_angle"].to_numpy(), df["mocap_elbow"].to_numpy(), df["mocap_trunk"].to_numpy()
     mp_angle, mp_elbow, mp_trunk = df[f"{VARIANT}_angle"].to_numpy(), df[f"{VARIANT}_elbow"].to_numpy(), df[f"{VARIANT}_trunk"].to_numpy()
     rows = []
@@ -115,50 +136,68 @@ def per_rep_features_for_recording(df: pd.DataFrame, reps: pd.DataFrame, fps: fl
         mocap_peak, mp_peak = np.nanmax(mocap_angle[s:e + 1]), np.nanmax(mp_angle[s:e + 1])
         mocap_elbow_min, mp_elbow_min = np.nanmin(mocap_elbow[s:e + 1]), np.nanmin(mp_elbow[s:e + 1])
         mocap_trunk_max, mp_trunk_max = np.nanmax(mocap_trunk[s:e + 1]), np.nanmax(mp_trunk[s:e + 1])
-        tempo_s = (e - s + 1) / fps  # identical for mocap and mediapipe BY CONSTRUCTION -- see module docstring
         if np.isnan(mp_peak):
             continue
         rows.append({
             "subject": int(rep["subject"]), "video_id": rep["video_id"], "label": rep["label"],
-            "peak_angle_diff": mp_peak - mocap_peak, "elbow_min_diff": mp_elbow_min - mocap_elbow_min,
-            "trunk_max_diff": mp_trunk_max - mocap_trunk_max, "tempo_diff": 0.0,
+            "label_correct": 1 if rep["label"] == "correct" else 0,
             "mocap_peak_angle": mocap_peak, "mp_peak_angle": mp_peak,
             "mocap_elbow_min": mocap_elbow_min, "mp_elbow_min": mp_elbow_min,
             "mocap_trunk_max": mocap_trunk_max, "mp_trunk_max": mp_trunk_max,
-            "mocap_tempo_s": tempo_s, "mp_tempo_s": tempo_s,
-            "label_correct": 1 if rep["label"] == "correct" else 0,
         })
     return rows
 
 
-def per_subject_summary(rep_df: pd.DataFrame) -> list[str]:
-    lines = []
+def reps_per_subject_per_label(rep_df: pd.DataFrame) -> list[str]:
+    counts = rep_df.groupby(["subject", "label"]).size().unstack(fill_value=0)
+    lines = ["| subject | correct | incorrect |", "|---|---|---|"]
     for subject in sorted(rep_df["subject"].unique()):
-        sub_df = rep_df[rep_df["subject"] == subject]
-        lines.append(f"- **subject {subject}** (n={len(sub_df)} reps, {sub_df['video_id'].unique().tolist()}):")
-        for col, label in (("peak_angle_diff", "peak_angle"), ("elbow_min_diff", "elbow_min"),
-                            ("trunk_max_diff", "trunk_max"), ("tempo_diff", "tempo")):
-            lines.append(f"  - {label}_diff: mean={sub_df[col].mean():.2f}  std={sub_df[col].std():.2f}")
+        row = counts.loc[subject]
+        lines.append(f"| {subject} | {row.get('correct', 0)} | {row.get('incorrect', 0)} |")
     return lines
 
 
-# ===========================================================================
-# PART 3 -- AUC under variant C
-# ===========================================================================
+def per_subject_auc(rep_df: pd.DataFrame) -> tuple[list[str], dict]:
+    """Per-subject AUC (correct vs incorrect) computed WITHIN each
+    subject's own reps only, for each feature under mocap and under
+    variant C, plus the mean of those per-subject AUCs -- NOT the
+    pooled-across-subjects AUC, which would let between-subject
+    differences (e.g. a systematically larger range of motion for one
+    subject) masquerade as the feature's within-subject discriminative
+    power.
+    """
+    col_map = {
+        "peak_angle": ("mocap_peak_angle", "mp_peak_angle"),
+        "elbow_min": ("mocap_elbow_min", "mp_elbow_min"),
+        "trunk_max": ("mocap_trunk_max", "mp_trunk_max"),
+    }
+    subjects = [int(s) for s in sorted(rep_df["subject"].unique())]
+    flagged = [s for s in subjects if rep_df[rep_df["subject"] == s]["label_correct"].nunique() < 2]
 
-def auc_table(rep_df: pd.DataFrame) -> list[str]:
-    lines = ["| source | feature | n | AUC |", "|---|---|---|---|"]
-    pairs = [
-        ("mocap", "mocap_peak_angle"), ("mocap", "mocap_elbow_min"), ("mocap", "mocap_trunk_max"), ("mocap", "mocap_tempo_s"),
-        (VARIANT, "mp_peak_angle"), (VARIANT, "mp_elbow_min"), (VARIANT, "mp_trunk_max"), (VARIANT, "mp_tempo_s"),
-    ]
-    for source, col in pairs:
-        if rep_df[col].nunique() < 2 or rep_df["label_correct"].nunique() < 2:
-            auc = None
-        else:
-            auc = roc_auc_score(rep_df["label_correct"], rep_df[col])
-        lines.append(f"| {source} | {col} | {len(rep_df)} | {round(auc, 3) if auc is not None else 'N/A'} |")
-    return lines
+    lines = ["| feature | source | " + " | ".join(f"subj {s} AUC" for s in subjects) + " | mean (within-subject) |",
+              "|---|---|" + "---|" * len(subjects) + "---|"]
+    means = {}
+    for feature, (mocap_col, mp_col) in col_map.items():
+        for source, col in (("mocap", mocap_col), (VARIANT, mp_col)):
+            per_subj = []
+            for subject in subjects:
+                sub_df = rep_df[rep_df["subject"] == subject]
+                if sub_df["label_correct"].nunique() < 2 or sub_df[col].nunique() < 2:
+                    per_subj.append(None)
+                else:
+                    per_subj.append(roc_auc_score(sub_df["label_correct"], sub_df[col]))
+            valid_vals = [v for v in per_subj if v is not None]
+            mean_auc = float(np.mean(valid_vals)) if valid_vals else None
+            means[(feature, source)] = mean_auc
+            cells = " | ".join(f"{v:.3f}" if v is not None else "N/A (one label)" for v in per_subj)
+            lines.append(f"| {feature} | {source} | {cells} | "
+                          f"{round(mean_auc, 3) if mean_auc is not None else 'N/A'} |")
+    if flagged:
+        lines.append(f"\n**Subject(s) {flagged} have only one label present** -- AUC is undefined for them "
+                      "(marked N/A above), and they're excluded from the mean-within-subject AUC.\n")
+    else:
+        lines.append(f"\nAll subjects ({subjects}) have both labels present -- no subject flagged.\n")
+    return lines, means
 
 
 def main() -> None:
@@ -172,14 +211,15 @@ def main() -> None:
     recordings = calib_cam17_front.drop_duplicates(subset=["video_id"])[["subject", "video_id", "video"]]
 
     lines = [
-        "# Variant C (world landmarks) vs mocap -- characterisation\n",
+        "# Variant C (world landmarks) vs mocap -- reconciled characterisation\n",
         f"_commit: `{commit}` (working tree {'dirty' if dirty else 'clean'})_\n",
-        f"Calibration subjects: {CALIBRATION_SUBJECTS}, front camera (cam17) only. Evaluation subjects never read.\n",
+        f"Calibration subjects: {CALIBRATION_SUBJECTS}, front camera (cam17) only. Evaluation subjects never read. "
+        "No benchmark was run for this.\n",
     ]
 
     subjects_present = sorted(recordings["subject"].unique().tolist())
     subjects_missing = [s for s in CALIBRATION_SUBJECTS if s not in subjects_present]
-    lines.append(f"Recordings actually used: {recordings['video_id'].tolist()} (subjects {subjects_present}).")
+    lines.append(f"Recordings used: {recordings['video_id'].tolist()} (subjects {subjects_present}).")
     if subjects_missing:
         lines.append(f"**Subject(s) {subjects_missing} have no cam17/front recording in this dataset** -- confirmed "
                       f"by filtering data/rehab24_manifest.csv for subject in {CALIBRATION_SUBJECTS}, camera=='cam17', "
@@ -188,69 +228,64 @@ def main() -> None:
 
     print("Loading/building per-frame variant-C + mocap series for each recording...")
     per_recording_dfs = {}
-    fps_by_video = {}
     for _, rec in recordings.iterrows():
         print(f"  {rec['video_id']}...")
         per_recording_dfs[rec["video_id"]] = load_or_build_recording_df(rec["video_id"], rec["video"])
-        fps_by_video[rec["video_id"]] = recording_fps(rec["video"])
     all_df = pd.concat(per_recording_dfs.values(), ignore_index=True)
 
     # ---- PART 1 ----
-    fit = frame_level_fit_with_offset_split(all_df)
-    print(f"Frame-level fit (variant {VARIANT}): {fit}")
-    lines.append("\n## PART 1 -- frame-level fit vs mocap\n")
+    fit = frame_level_table(all_df, calib_cam17_front)
+    print(f"Frame-level table (variant {VARIANT}): {fit}")
+    lines.append("\n## PART 1 -- reconciled frame-level table\n")
     lines.append(f"n={fit['n']} pooled frames across {recordings['video_id'].tolist()}.\n")
-    lines.append("| slope | intercept | r | residual_std (after full affine fit) | rest_bias | peak_bias |")
-    lines.append("|---|---|---|---|---|---|")
-    lines.append(f"| {fit['slope']} | {fit['intercept']} | {fit['r']} | {fit['residual_std']} | "
-                  f"{fit['rest_bias']} | {fit['peak_bias']} |\n")
-    lines.append("**MAE split into offset (constant bias) vs random error:**\n")
-    lines.append("| MAE (total, mp - mocap) | offset (mean signed error) | MAE after removing the offset |")
-    lines.append("|---|---|---|")
-    lines.append(f"| {fit['mae_total']} | {fit['offset_bias']} | {fit['mae_after_offset_removed']} |\n")
-    offset_share = abs(fit["offset_bias"]) / fit["mae_total"] * 100 if fit["mae_total"] else 0.0
-    lines.append(f"The constant offset accounts for about {offset_share:.0f}% of the total MAE magnitude "
-                 f"(|offset|={abs(fit['offset_bias']):.2f} of MAE={fit['mae_total']:.2f}); "
-                 f"{fit['mae_after_offset_removed']:.2f} deg of error remains after removing just that constant, "
-                 "i.e. most of variant C's frame-level error is NOT a single fixable constant bias -- it varies "
-                 "with the angle itself (consistent with a slope of "
-                 f"{fit['slope']} rather than 1.0, and with rest_bias={fit['rest_bias']} differing from "
-                 f"peak_bias={fit['peak_bias']}).\n")
+    lines.append("| slope | intercept | mean_error (mp-mocap) | error_std | MAE | MAE after subtracting mean_error "
+                  "| rest_bias (n) | peak_bias (n) |")
+    lines.append("|---|---|---|---|---|---|---|---|")
+    lines.append(f"| {fit['slope']} | {fit['intercept']} | {fit['mean_error']} | {fit['error_std']} | {fit['mae']} | "
+                  f"{fit['mae_after_mean_removed']} | {fit['rest_bias']} (n={fit['rest_n']}) | "
+                  f"{fit['peak_bias']} (n={fit['peak_n']}) |\n")
+    lines.append(f"**rest frames**: pooled across all {recordings['video_id'].tolist()} frames, any frame whose "
+                 "mocap_angle is within 5 deg of the pooled minimum mocap_angle across those recordings "
+                 f"(n={fit['rest_n']} frames). **peak frames**: ONE frame per annotated rep (correct AND "
+                 "incorrect, camera/view-filtered only -- all 25 reps), at that specific rep's own mocap_angle "
+                 f"maximum within its annotated [start_frame, end_frame] span (n={fit['peak_n']} reps/frames, "
+                 "one point per rep, not per-frame).\n")
+    lines.append("**Reconciling the earlier inconsistency (offset -14.86 vs rest -9.51 / peak +3.35):** that was "
+                 "a methodology bug in the first version of this script, not a labelling error in the earlier "
+                 "mean_error number. The first version's \"peak_bias\" used a GLOBAL per-recording excursion "
+                 "threshold (any frame within 5 deg of that recording's own single highest mocap_angle), which "
+                 "is a different, less principled population of frames than diagnose_coord_space.py's original "
+                 "per-rep peak definition (used in results/diag_coords.md) -- and could draw its handful of "
+                 "frames disproportionately from whichever single rep happened to reach the highest excursion "
+                 f"in a recording. This version uses that same original per-rep definition throughout: mean_error="
+                 f"{fit['mean_error']} (pooled over ALL {fit['n']} frames, including the ascending/descending "
+                 f"phase between rest and peak, which is most of the recording), rest_bias={fit['rest_bias']} and "
+                 f"peak_bias={fit['peak_bias']} are each a SMALL SUBSET of those frames -- there's no mathematical "
+                 "requirement that the pooled mean sit between them, since the remaining (non-rest, non-peak) "
+                 "frames in the ascending/descending phase carry most of the weight and are not shown separately "
+                 f"here. (For reference: with slope={fit['slope']} and intercept={fit['intercept']}, the affine "
+                 f"fit alone predicts error = {fit['slope'] - 1:.3f}*mocap_angle + {fit['intercept']}, which is "
+                 "a smooth, continuously-varying function of mocap_angle, not a single constant -- consistent "
+                 "with rest_bias and peak_bias differing from each other and from the pooled mean_error.)\n")
 
     # ---- PART 2 ----
-    print("Computing per-rep paired differences (all labels) per subject...")
+    print("Computing per-rep features and per-subject AUC...")
     manifest_subj = manifest.set_index("video_id")["subject"].to_dict()
     rep_rows = []
     for video_id, df in per_recording_dfs.items():
         reps = calib_cam17_front[calib_cam17_front["video_id"] == video_id].copy()
         reps["subject"] = manifest_subj[video_id]
-        rep_rows.extend(per_rep_features_for_recording(df, reps, fps_by_video[video_id]))
+        rep_rows.extend(per_rep_features_for_recording(df, reps))
     rep_df = pd.DataFrame(rep_rows)
-    rep_df.to_csv(DIAG_DIR / "coords_C_per_rep_all_labels.csv", index=False)
+    rep_df.to_csv(DIAG_DIR / "coords_C_per_rep_reconciled.csv", index=False)
     print(f"  {len(rep_df)} reps total (labels: {rep_df['label'].value_counts().to_dict()})")
 
-    lines.append("\n## PART 2 -- per-rep paired differences vs mocap, per subject (ALL annotated reps, both labels)\n")
-    lines.append(f"n={len(rep_df)} reps ({rep_df['label'].value_counts().to_dict()}).\n")
-    lines.extend(per_subject_summary(rep_df))
-    lines.append("\n`tempo_diff` is 0.0 for every rep by construction: both mocap_tempo_s and mp_tempo_s are "
-                 "computed from the SAME annotated (start_frame, end_frame) span / fps -- this measures rep "
-                 "DURATION agreement given a shared boundary, not MediaPipe's own rep-boundary detection "
-                 "(RepDetector's own detected boundaries were already characterised separately in "
-                 "results/diag_rehab24.md PART 1).\n")
-
-    # ---- PART 3 ----
-    print("Computing AUC under variant C...")
-    lines.append("\n## PART 3 -- AUC for correct-vs-incorrect discrimination (variant C)\n")
-    lines.extend(auc_table(rep_df))
-
-    # ---- rule reminder ----
-    lines.append(f"\n## Pre-registered MAE rule, restated\n")
-    lines.append(f"The earlier task's adoption rule required MAE <= {ADOPTION_MAE_MAX} deg; variant C's frame-level "
-                 f"MAE here is {fit['mae_total']} deg, so that rule was **NOT met** (as already reported in "
-                 "results/diag_coords.md). The offset/random-error split above shows why: even after removing "
-                 "the single largest fixable component (the constant offset), "
-                 f"{fit['mae_after_offset_removed']} deg of error remains -- too large a residual for a pure "
-                 "coordinate-space fix (world landmarks) alone to close the gap to <= 10 deg.\n")
+    lines.append("\n## PART 2 -- reps per subject per label, and per-subject AUC (not pooled)\n")
+    lines.extend(reps_per_subject_per_label(rep_df))
+    lines.append("")
+    auc_lines, means = per_subject_auc(rep_df)
+    lines.extend(auc_lines)
+    print(f"Mean within-subject AUC: {means}")
 
     (RESULTS_DIR / "diag_coords_C.md").write_text("\n".join(lines))
     print(f"\nWrote {RESULTS_DIR / 'diag_coords_C.md'}")
