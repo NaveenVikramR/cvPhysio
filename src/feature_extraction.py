@@ -4,6 +4,8 @@ enum. Output: feature dict, or None if confidence gating fails. Must not
 import pose_estimation or classifier.
 """
 
+import math
+
 import numpy as np
 import pandas as pd
 
@@ -33,13 +35,22 @@ BASE_REQUIRED_ROLES = {
 def compute_angle(a, b, c) -> float:
     """Angle at point b, in degrees, between vectors b->a and b->c.
     a, b, c are (x, y, z, ...) points; any fields past index 2 are ignored.
+    Returns NaN (not a crash) if b coincides with a or with c -- a
+    zero-length vector has no defined direction, so the angle is
+    undefined. Callers must treat a NaN result as an invalid frame,
+    the same way a confidence-gating failure is treated (see
+    extract_features() and app.py's process_frame()).
     """
     a = np.asarray(a[:3], dtype=float)
     b = np.asarray(b[:3], dtype=float)
     c = np.asarray(c[:3], dtype=float)
     ba = a - b
     bc = c - b
-    cos_theta = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
+    norm_ba = np.linalg.norm(ba)
+    norm_bc = np.linalg.norm(bc)
+    if norm_ba == 0 or norm_bc == 0:
+        return float("nan")
+    cos_theta = np.dot(ba, bc) / (norm_ba * norm_bc)
     return float(np.degrees(np.arccos(np.clip(cos_theta, -1.0, 1.0))))
 
 
@@ -200,6 +211,12 @@ def extract_features(
         angle = compute_shoulder_abduction_angle(landmarks)
     else:
         angle = compute_shoulder_rotation_angle(landmarks)
+
+    if math.isnan(angle):
+        # Degenerate frame (e.g. two landmarks coincide) -- treated the
+        # same as a confidence-gating failure: exclude it, don't return
+        # an unusable angle.
+        return None
 
     side_name = "LEFT" if side is LEFT else "RIGHT"
     return {"exercise": exercise, "side": side_name, "angle_deg": angle}

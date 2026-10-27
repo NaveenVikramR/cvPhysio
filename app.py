@@ -10,6 +10,7 @@ features(), not a single frame's angle_deg.
 
 import argparse
 import json
+import math
 import statistics
 import sys
 import time
@@ -241,6 +242,16 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
         features = extract_features(landmarks, exercise) if visible else None
         elbow_val = compute_elbow_angle(landmarks)
         trunk_val = compute_trunk_lean_deg(landmarks)
+        if visible and (features is None or math.isnan(elbow_val) or math.isnan(trunk_val)):
+            # extract_features() already excludes a NaN angle_deg (e.g. a
+            # degenerate/coincident-landmark frame) by returning None; a
+            # NaN elbow/trunk reading is caught here instead, since those
+            # are computed outside extract_features(). Either way, treat
+            # this frame as if confidence had failed -- it must not reach
+            # RepDetector or the parallel elbow/trunk buffers (score_rep
+            # requires those three lists to stay equal-length).
+            visible = False
+            features = None
 
     angle_deg = features["angle_deg"] if features else None
     side = features["side"] if features else None
