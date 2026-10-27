@@ -247,7 +247,12 @@ if __name__ == "__main__":
         status_slot = st.empty()
 
         if st.session_state.running:
-            capture = open_webcam()
+            try:
+                capture = open_webcam()
+            except RuntimeError as exc:
+                st.error(f"Could not open the camera: {exc}")
+                st.session_state.running = False
+                st.stop()
             fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
             tracker = SessionTracker(user_id=user_id, exercise=exercise)
             session = Session(exercise)
@@ -355,11 +360,13 @@ if __name__ == "__main__":
                     annotated = draw_overlay(frame, message, overlay_is_correct)
                     frame_slot.image(annotated, channels="BGR")
             finally:
-                session.stop()  # loop exited (camera failure, or "Stop session" interrupting this script run)
+                session.stop()  # loop exited (camera failure, or "Stop session" interrupting this script run) --
+                # any rep still MOVING at this moment is simply never completed: its buffered frames live only
+                # on session.detector, which is about to go out of scope, so it's discarded by construction,
+                # never scored, never written anywhere.
                 capture.release()
-                if tracker.reps or tracker.discards:
-                    tracker.save()
-                    st.json(tracker.summary())
+                tracker.save()  # always, even a totally empty session -- writes a header-only CSV, never a 0-byte file
+                st.json(tracker.summary())
 
     else:  # ui_mode == "Record reference"
         st.subheader("Record a reference")
@@ -382,7 +389,12 @@ if __name__ == "__main__":
         status_slot = st.empty()
 
         if st.session_state.recording_reference:
-            capture = open_webcam()
+            try:
+                capture = open_webcam()
+            except RuntimeError as exc:
+                st.error(f"Could not open the camera: {exc}")
+                st.session_state.recording_reference = False
+                st.stop()
             fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
             session = Session(exercise)
             session.start()
