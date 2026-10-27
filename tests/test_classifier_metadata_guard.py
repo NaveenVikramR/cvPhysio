@@ -9,10 +9,8 @@ import joblib
 import pytest
 from sklearn.ensemble import RandomForestClassifier
 
-from conftest import load_app_classifier_loader
 from src.classifier import FEATURE_COLUMNS
-
-load_classifier_for_live_use = load_app_classifier_loader()
+from src.pipeline import load_classifier_for_live_use
 
 
 def write_fixture_model(models_dir, exercise="shoulder_abduction"):

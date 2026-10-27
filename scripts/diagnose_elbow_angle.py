@@ -30,27 +30,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.dataset_loader import _fk_frame_to_landmarks, discover_rep_files, forward_kinematics_frame, select_side_for_rep, sibling_path
 import pandas as pd
 from src.feature_extraction import check_confidence, compute_elbow_angle, extract_features, select_side
+from src.pipeline import RepDetector
 from src.pose_estimation import get_pose_landmarks
 
 CLIP = "data/recordings/shoulderAbduction1.mp4"
 EXERCISE = "shoulder_abduction"
 SCRATCH_DIR = Path("scratch")
-
-
-def load_rep_detector():
-    """exec()-slice app.py's RepDetector class + constants out of its
-    source text -- same technique as scripts/diagnose_misclassification.py
-    and scripts/rotation_proxy_experiment.py, needed because app.py now
-    parses CLI args and launches Streamlit/headless logic at import time."""
-    import statistics
-    from collections import Counter, deque
-
-    source = Path("app.py").read_text()
-    start = source.index("CALIBRATION_FRAMES = 15")
-    end = source.index("\ndef process_frame(detector")
-    namespace = {"statistics": statistics, "Counter": Counter, "deque": deque}
-    exec(source[start:end], namespace)
-    return namespace["RepDetector"]
 
 
 def extract_live_rep():
@@ -59,7 +44,7 @@ def extract_live_rep():
     elbow_angle_deg, visibility (per required landmark), and the raw
     frame + landmarks at each contributing frame, so the exact frame at
     the rep's elbow-angle minimum can be recovered afterward."""
-    RepDetectorClass = load_rep_detector()
+    RepDetectorClass = RepDetector
     cap = cv2.VideoCapture(CLIP)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     detector = RepDetectorClass()

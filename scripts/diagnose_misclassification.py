@@ -33,6 +33,7 @@ from src.feature_extraction import (
     extract_rep_features,
     select_side,
 )
+from src.pipeline import RepDetector
 from src.pose_estimation import get_pose_landmarks
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -45,27 +46,6 @@ CLIPS = [
     ("data/recordings/ShoulderInteralExternal2.mp4", "shoulder_rotation"),
     ("data/recordings/physitrack_standing_rotation.mp4", "shoulder_rotation"),
 ]
-
-
-def load_rep_detector():
-    """Pull RepDetector straight out of app.py's source -- same technique
-    used throughout this project, avoids importing app.py itself (which
-    has Streamlit/webcam calls at module scope)."""
-    src = (ROOT / "app.py").read_text(encoding="utf-8")
-    start = src.index("CALIBRATION_FRAMES = 15")
-    end = src.index("\nst.set_page_config")
-    block_src = src[start:end]
-    namespace = {}
-    exec(
-        "import statistics\nfrom collections import Counter, deque\n"
-        "LANDMARK_LABELS = {11:'left shoulder',12:'right shoulder',13:'left elbow',14:'right elbow',"
-        "15:'left wrist',16:'right wrist',23:'left hip',24:'right hip'}\n" + block_src,
-        namespace,
-    )
-    return namespace["RepDetector"]
-
-
-RepDetector = load_rep_detector()
 
 
 def class_probabilities(clf: CorrectnessClassifier, features: dict) -> dict:

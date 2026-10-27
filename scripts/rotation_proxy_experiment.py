@@ -21,10 +21,8 @@ rotation_proxy = (wrist_x - elbow_x) / forearm_length
 Reuses the project's established techniques: FK joint positions via
 src/dataset_loader.py (same functions scripts/train_classifier.py's
 dataset loading goes through), and RepDetector-based rep segmentation via
-exec()-ing app.py's class definition out of its source text (same
-technique as scripts/diagnose_misclassification.py), since app.py itself
-now parses CLI args and launches Streamlit/headless-video logic at import
-time and must not be imported directly from another script.
+src.pipeline.RepDetector (the shared module app.py and every diagnostic
+script import rep-detection from).
 """
 
 import sys
@@ -47,6 +45,7 @@ from src.dataset_loader import (
     sibling_path,
 )
 from src.feature_extraction import LEFT, check_confidence, select_side
+from src.pipeline import RepDetector
 from src.pose_estimation import get_pose_landmarks
 
 RAW_DIR = "data/ui_prmd"
@@ -57,23 +56,6 @@ LIVE_CLIPS = [
     "data/recordings/physitrack_standing_rotation.mp4",
 ]
 SCRATCH_DIR = Path("scratch")
-
-
-def load_rep_detector():
-    """exec()-slice app.py's RepDetector class + constants out of its
-    source text, between "CALIBRATION_FRAMES = 15" and the start of
-    process_frame() -- same technique as scripts/diagnose_
-    misclassification.py's load_rep_detector(), needed because app.py now
-    runs argparse + Streamlit/headless logic at import time."""
-    import statistics
-    from collections import Counter, deque
-
-    source = Path("app.py").read_text()
-    start = source.index("CALIBRATION_FRAMES = 15")
-    end = source.index("\ndef process_frame(detector")
-    namespace = {"statistics": statistics, "Counter": Counter, "deque": deque}
-    exec(source[start:end], namespace)
-    return namespace["RepDetector"]
 
 
 def proxy_from_points(elbow_xy: np.ndarray, wrist_xy: np.ndarray) -> float:
@@ -182,7 +164,7 @@ def main() -> None:
     incorrect_ranges = training_group_ranges(is_correct=False)
 
     print("[3/3] Live rotation clips (RepDetector-segmented)...")
-    RepDetectorClass = load_rep_detector()
+    RepDetectorClass = RepDetector
     live_ranges_by_clip = {}
     for clip in LIVE_CLIPS:
         ranges = live_clip_rep_ranges(clip, RepDetectorClass)

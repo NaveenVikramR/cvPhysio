@@ -4,12 +4,9 @@ RepDetector segmenter, or src.rules.score_rep() -- it must instead be
 excluded, the same way a low-confidence frame is.
 """
 
-from conftest import load_app_process_frame
-
 from src.feature_extraction import LEFT
+from src.pipeline import RepDetector, process_frame
 from src.rules import score_rep
-
-RepDetector, process_frame = load_app_process_frame()
 
 
 def make_landmarks(overrides=None):

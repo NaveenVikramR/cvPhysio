@@ -3,9 +3,7 @@
 lost_tracking), on synthetic angle sequences (no video).
 """
 
-from conftest import load_app_rep_detector
-
-RepDetector = load_app_rep_detector()
+from src.pipeline import RepDetector
 
 BASELINE = 20.0
 

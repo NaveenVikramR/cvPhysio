@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import rules as rules_module
 from src import smoothing as smoothing_module
+from src.pipeline import RepDetector, process_frame
 from src.pose_estimation import get_pose_landmarks
 from scripts.evaluate_rules import read_manifest
 
@@ -38,31 +39,6 @@ PASS_REP_COUNT_UNCHANGED = True
 PASS_MAX_PEAK_SHIFT_DEG = 2.0
 PASS_MAX_REP_END_LAG_FRAMES = 3
 PASS_MIN_STD_REDUCTION_FRAC = 0.30
-
-
-def load_rep_detector_and_process_frame():
-    """exec()-slice app.py's RepDetector class + process_frame() out of
-    its source text -- same technique as the other scripts/*.py scripts
-    in this project, needed because app.py now parses CLI args and
-    launches Streamlit/headless logic at import time."""
-    import math
-    import statistics
-    from collections import Counter, deque
-
-    from src.feature_extraction import check_confidence, compute_elbow_angle, compute_trunk_lean_deg, extract_features, select_side
-    from src.statuses import DiscardReason
-
-    source = Path("app.py").read_text()
-    start = source.index("CALIBRATION_FRAMES = 15")
-    end = source.index("\ndef build_smoother")
-    namespace = {
-        "math": math, "statistics": statistics, "Counter": Counter, "deque": deque,
-        "check_confidence": check_confidence, "extract_features": extract_features,
-        "select_side": select_side, "compute_elbow_angle": compute_elbow_angle,
-        "compute_trunk_lean_deg": compute_trunk_lean_deg, "DiscardReason": DiscardReason,
-    }
-    exec(source[start:end], namespace)
-    return namespace["RepDetector"], namespace["process_frame"]
 
 
 def run_clip(clip_path: str, exercise: str, smoother, required_roles, RepDetectorClass, process_frame) -> dict:
@@ -151,7 +127,7 @@ def main() -> None:
               "Add at least 3 calibration-set clips to data/clips_manifest.csv and re-run this script.")
         return
 
-    RepDetectorClass, process_frame = load_rep_detector_and_process_frame()
+    RepDetectorClass = RepDetector
     required_roles = rules_module.required_joint_roles()
 
     print("\nMeasuring no-smoothing baselines...")

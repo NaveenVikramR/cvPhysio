@@ -22,7 +22,6 @@ import json
 import subprocess
 import sys
 import time
-from collections import Counter
 from pathlib import Path
 
 import cv2
@@ -42,8 +41,8 @@ from src.feature_extraction import (
     extract_rep_features,
     select_side,
 )
+from src.pipeline import RepDetector, process_frame
 from src.pose_estimation import get_pose_landmarks
-from src.statuses import DiscardReason
 
 DATA_DIR = Path("data/rehab24_6")
 MANIFEST_PATH = Path("data/rehab24_manifest.csv")
@@ -83,28 +82,6 @@ def write_csv_with_provenance(df: pd.DataFrame, path: Path, commit: str, dirty: 
     with path.open("w", newline="") as f:
         f.write(f"# commit: {commit}\n# dirty: {dirty}\n")
         df.to_csv(f, index=False)
-
-
-def load_rep_detector_and_process_frame():
-    """exec()-slice app.py's RepDetector class + process_frame() out of
-    its source text -- same technique as the other scripts/*.py scripts
-    in this project, needed because app.py now parses CLI args and
-    launches Streamlit/headless logic at import time."""
-    import math
-    import statistics
-    from collections import deque
-
-    source = Path("app.py").read_text()
-    start = source.index("CALIBRATION_FRAMES = 15")
-    end = source.index("\ndef build_smoother")
-    namespace = {
-        "math": math, "statistics": statistics, "Counter": Counter, "deque": deque,
-        "check_confidence": check_confidence, "extract_features": extract_features,
-        "select_side": select_side, "compute_elbow_angle": compute_elbow_angle,
-        "compute_trunk_lean_deg": compute_trunk_lean_deg, "DiscardReason": DiscardReason,
-    }
-    exec(source[start:end], namespace)
-    return namespace["RepDetector"], namespace["process_frame"]
 
 
 def load_manifest_and_split() -> tuple[pd.DataFrame, dict]:
@@ -417,7 +394,7 @@ def main() -> None:
     print(f"Manifest: {len(manifest)} rows. Calibration subjects: {split['calibration_subjects']}  "
           f"Evaluation subjects: {split['evaluation_subjects']}")
 
-    RepDetectorClass, process_frame = load_rep_detector_and_process_frame()
+    RepDetectorClass = RepDetector
     config = rules_module.load_config(EXERCISE)
 
     print("\n[a] Rep detection...")

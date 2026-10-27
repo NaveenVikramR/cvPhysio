@@ -23,12 +23,10 @@ results/rules_eval.csv (one row per scored rep).
 """
 
 import csv
-import math
-import statistics
 import subprocess
 import sys
 import time
-from collections import Counter, defaultdict, deque
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import cv2
@@ -36,9 +34,9 @@ import cv2
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src import rules as rules_module
-from src.feature_extraction import check_confidence, compute_elbow_angle, compute_trunk_lean_deg, extract_features, select_side
+from src.pipeline import RepDetector, process_frame
 from src.pose_estimation import get_pose_landmarks
-from src.statuses import DiscardReason, RuleStatus
+from src.statuses import RuleStatus
 
 MANIFEST_PATH = Path("data/clips_manifest.csv")
 RESULTS_DIR = Path("results")
@@ -66,24 +64,6 @@ def git_provenance() -> tuple[str, bool]:
         return commit, bool(status.strip())
     except Exception:
         return "unknown", True
-
-
-def load_rep_detector_and_process_frame():
-    """exec()-slice app.py's RepDetector class + process_frame() out of
-    its source text -- same technique as the other scripts/*.py scripts
-    in this project, needed because app.py now parses CLI args and
-    launches Streamlit/headless logic at import time."""
-    source = Path("app.py").read_text()
-    start = source.index("CALIBRATION_FRAMES = 15")
-    end = source.index("\ndef build_smoother")
-    namespace = {
-        "math": math, "statistics": statistics, "Counter": Counter, "deque": deque,
-        "check_confidence": check_confidence, "extract_features": extract_features,
-        "select_side": select_side, "compute_elbow_angle": compute_elbow_angle,
-        "compute_trunk_lean_deg": compute_trunk_lean_deg, "DiscardReason": DiscardReason,
-    }
-    exec(source[start:end], namespace)
-    return namespace["RepDetector"], namespace["process_frame"]
 
 
 def read_manifest(path: Path) -> list[dict]:
@@ -167,7 +147,7 @@ def main() -> None:
         print(f"No manifest found at {MANIFEST_PATH} -- nothing to evaluate.")
         return
 
-    RepDetectorClass, process_frame = load_rep_detector_and_process_frame()
+    RepDetectorClass = RepDetector
     required_roles = rules_module.required_joint_roles()
 
     missing, usable = [], []

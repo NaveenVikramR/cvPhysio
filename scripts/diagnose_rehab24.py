@@ -37,11 +37,11 @@ from scripts.benchmark_rehab24 import (
     git_provenance,
     load_manifest_and_split,
     load_mocap_joints,
-    load_rep_detector_and_process_frame,
     mediapipe_angle_series_for_rep,
     mocap_shoulder_trunk_angle,
     rep_feature_sequences,
 )
+from src.pipeline import RepDetector, process_frame
 from src import rules as rules_module
 from src.feature_extraction import compute_angle, compute_elbow_angle
 from src.pose_estimation import get_pose_landmarks
@@ -144,7 +144,7 @@ def run_repdetector_tracked(video_path: Path, RepDetectorClass, process_frame,
 
 
 def part1_rep_detection(manifest: pd.DataFrame) -> dict:
-    RepDetectorClass, process_frame = load_rep_detector_and_process_frame()
+    RepDetectorClass = RepDetector
     calib = calibration_manifest(manifest)
     recordings = calib.drop_duplicates(subset=["video_id", "camera"])
 
@@ -200,7 +200,7 @@ def plot_angle_with_rep_boundaries(video_path: Path, video_id: str, camera: str,
     boundaries both overlaid, for visual diagnosis."""
     from src.feature_extraction import extract_features
 
-    RepDetectorClass, process_frame = load_rep_detector_and_process_frame()
+    RepDetectorClass = RepDetector
     required_roles = rules_module.required_joint_roles()
 
     cap = cv2.VideoCapture(str(video_path))
