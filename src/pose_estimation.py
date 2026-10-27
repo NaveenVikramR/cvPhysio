@@ -19,8 +19,19 @@ between frames the way the old solutions API implicitly did for a video
 stream -- IMAGE mode re-detects from scratch every call with no tracking
 continuity, which would be jitterier for RepDetector's rest-baseline
 calibration in app.py.
+
+MediaPipe's PoseLandmarkerResult carries TWO landmark sets per frame:
+pose_landmarks (NormalizedLandmark -- x/y each independently divided by
+that axis's own frame dimension, landing in roughly [0, 1]) and
+pose_world_landmarks (Landmark -- metric meters, hip-centered, NOT
+dependent on frame width/height). results/diag_coords.md found that
+feeding the normalized set straight into compute_angle() on a non-square
+frame is an anisotropic distortion of the real geometry; world
+landmarks don't have that problem, so they're the default here
+(config/pose.json's "landmark_space" key) -- see get_pose_landmarks().
 """
 
+import json
 from pathlib import Path
 
 import cv2
@@ -29,6 +40,7 @@ from mediapipe.tasks.python import BaseOptions
 from mediapipe.tasks.python.vision import PoseLandmarker, PoseLandmarkerOptions, RunningMode
 
 _MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "pose_landmarker_lite.task"
+CONFIG_PATH = Path("config/pose.json")
 
 _landmarker = PoseLandmarker.create_from_options(PoseLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=str(_MODEL_PATH)),
@@ -39,12 +51,26 @@ _landmarker = PoseLandmarker.create_from_options(PoseLandmarkerOptions(
 
 _next_timestamp_ms = 0
 
+LANDMARK_SPACES = ("world", "normalized")
 
-def get_pose_landmarks(frame) -> list[tuple[float, float, float, float]] | None:
-    """Run MediaPipe Pose on a BGR frame and return the 33 landmarks as
-    (x, y, z, visibility) tuples, indexed per MediaPipe's PoseLandmark
-    enum (e.g. 11=left shoulder, 23=left hip). Returns None if no pose
-    was detected in the frame.
+
+def load_config() -> dict:
+    return json.loads(CONFIG_PATH.read_text())
+
+
+def get_pose_landmarks_pair(frame) -> tuple[
+    list[tuple[float, float, float, float]] | None,
+    list[tuple[float, float, float, float]] | None,
+]:
+    """Run MediaPipe Pose on a BGR frame ONCE and return BOTH landmark
+    sets that single inference call produces: (normalized, world).
+    normalized is MediaPipe's own NormalizedLandmark set, in image/pixel
+    space (kept available for drawing overlays on the frame); world is
+    pose_world_landmarks, in metric space. Either side is None if no
+    pose was detected. visibility is identical between the two sets for
+    the same joint (confirmed empirically on a real frame), so
+    confidence gating gives the same answer regardless of which set it
+    runs on.
     """
     global _next_timestamp_ms
     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -53,9 +79,30 @@ def get_pose_landmarks(frame) -> list[tuple[float, float, float, float]] | None:
     _next_timestamp_ms += 33  # monotonic tick; VIDEO mode needs increasing values, not real elapsed time
 
     if not result.pose_landmarks:
-        return None
-    landmarks = result.pose_landmarks[0]
-    return [(lm.x, lm.y, lm.z, lm.visibility) for lm in landmarks]
+        return None, None
+    normalized = [(lm.x, lm.y, lm.z, lm.visibility) for lm in result.pose_landmarks[0]]
+    world = (
+        [(lm.x, lm.y, lm.z, lm.visibility) for lm in result.pose_world_landmarks[0]]
+        if result.pose_world_landmarks else None
+    )
+    return normalized, world
+
+
+def get_pose_landmarks(frame) -> list[tuple[float, float, float, float]] | None:
+    """The single landmark set every existing caller (feature
+    extraction, confidence gating) uses -- whichever coordinate space
+    config/pose.json's "landmark_space" selects ("world" by default,
+    "normalized" to reproduce the pre-this-change behavior). The
+    selection happens here, not at the call site, so every caller's own
+    code is unchanged. Returns None if no pose was detected, or if the
+    selected space wasn't available for this frame (treated the same as
+    "no pose detected" -- never silently falls back to the other space).
+    """
+    landmark_space = load_config().get("landmark_space", "world")
+    if landmark_space not in LANDMARK_SPACES:
+        raise ValueError(f"config/pose.json landmark_space={landmark_space!r}; must be one of {LANDMARK_SPACES}")
+    normalized, world = get_pose_landmarks_pair(frame)
+    return world if landmark_space == "world" else normalized
 
 
 def open_webcam(camera_index: int = 0) -> cv2.VideoCapture:

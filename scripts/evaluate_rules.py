@@ -33,6 +33,7 @@ import cv2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src import pose_estimation
 from src import rules as rules_module
 from src.pipeline import RepDetector, process_frame
 from src.pose_estimation import get_pose_landmarks
@@ -141,7 +142,8 @@ def measure_fps(clip_path: str, exercise: str, config: dict, required_roles, Rep
 def main() -> None:
     RESULTS_DIR.mkdir(exist_ok=True)
     commit, dirty = git_provenance()
-    print(f"Provenance: commit={commit}  dirty={dirty}")
+    landmark_space = pose_estimation.load_config().get("landmark_space", "world")
+    print(f"Provenance: commit={commit}  dirty={dirty}  landmark_space={landmark_space}")
     rows = read_manifest(MANIFEST_PATH)
     if not rows:
         print(f"No manifest found at {MANIFEST_PATH} -- nothing to evaluate.")
@@ -216,7 +218,7 @@ def main() -> None:
     csv_path = RESULTS_DIR / "rules_eval.csv"
     if csv_rows:
         with csv_path.open("w", newline="") as f:
-            f.write(f"# commit: {commit}\n# dirty: {dirty}\n")
+            f.write(f"# commit: {commit}\n# dirty: {dirty}\n# landmark_space: {landmark_space}\n")
             writer = csv.DictWriter(f, fieldnames=list(csv_rows[0].keys()))
             writer.writeheader()
             writer.writerows(csv_rows)
@@ -266,6 +268,7 @@ def main() -> None:
     lines = []
     lines.append("# src/rules.py evaluation\n")
     lines.append(f"_commit: `{commit}` (working tree {'dirty' if dirty else 'clean'})_\n")
+    lines.append(f"_landmark_space: `{landmark_space}` (config/pose.json)_\n")
     lines.append(f"Manifest: `{MANIFEST_PATH}` -- {len(rows)} rows, {len(usable)} usable, {len(missing)} missing.\n")
 
     if missing:

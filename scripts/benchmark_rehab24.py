@@ -41,6 +41,7 @@ from src.feature_extraction import (
     extract_rep_features,
     select_side,
 )
+from src import pose_estimation
 from src.pipeline import RepDetector, process_frame
 from src.pose_estimation import get_pose_landmarks
 
@@ -78,9 +79,9 @@ def git_provenance() -> tuple[str, bool]:
         return "unknown", True
 
 
-def write_csv_with_provenance(df: pd.DataFrame, path: Path, commit: str, dirty: bool) -> None:
+def write_csv_with_provenance(df: pd.DataFrame, path: Path, commit: str, dirty: bool, landmark_space: str) -> None:
     with path.open("w", newline="") as f:
-        f.write(f"# commit: {commit}\n# dirty: {dirty}\n")
+        f.write(f"# commit: {commit}\n# dirty: {dirty}\n# landmark_space: {landmark_space}\n")
         df.to_csv(f, index=False)
 
 
@@ -385,7 +386,8 @@ def part_e_fps(video_path: Path, RepDetectorClass, process_frame) -> float:
 def main() -> None:
     RESULTS_DIR.mkdir(exist_ok=True)
     commit, dirty = git_provenance()
-    print(f"Provenance: commit={commit}  dirty={dirty}")
+    landmark_space = pose_estimation.load_config().get("landmark_space", "world")
+    print(f"Provenance: commit={commit}  dirty={dirty}  landmark_space={landmark_space}")
     if not MANIFEST_PATH.exists() or not SPLIT_PATH.exists():
         print(f"Missing {MANIFEST_PATH} or {SPLIT_PATH} -- run scripts/build_rehab24_manifest.py first.")
         return
@@ -427,16 +429,17 @@ def main() -> None:
 
     # ---- write outputs ----
     if not part_a.empty:
-        write_csv_with_provenance(part_a, RESULTS_DIR / "rehab24_rep_detection.csv", commit, dirty)
+        write_csv_with_provenance(part_a, RESULTS_DIR / "rehab24_rep_detection.csv", commit, dirty, landmark_space)
     if not part_b.empty:
-        write_csv_with_provenance(part_b, RESULTS_DIR / "rehab24_angle_fidelity.csv", commit, dirty)
+        write_csv_with_provenance(part_b, RESULTS_DIR / "rehab24_angle_fidelity.csv", commit, dirty, landmark_space)
     if not part_c.empty:
-        write_csv_with_provenance(part_c, RESULTS_DIR / "rehab24_scorer_vs_labels.csv", commit, dirty)
+        write_csv_with_provenance(part_c, RESULTS_DIR / "rehab24_scorer_vs_labels.csv", commit, dirty, landmark_space)
     if not part_d.empty:
-        write_csv_with_provenance(part_d, RESULTS_DIR / "rehab24_classifier_vs_labels.csv", commit, dirty)
+        write_csv_with_provenance(part_d, RESULTS_DIR / "rehab24_classifier_vs_labels.csv", commit, dirty, landmark_space)
 
     lines = ["# REHAB24-6 benchmark -- shoulder_abduction\n"]
     lines.append(f"_commit: `{commit}` (working tree {'dirty' if dirty else 'clean'})_\n")
+    lines.append(f"_landmark_space: `{landmark_space}` (config/pose.json)_\n")
     lines.append(f"Calibration subjects: {split['calibration_subjects']}  "
                   f"Evaluation subjects: {split['evaluation_subjects']}\n")
 
