@@ -25,6 +25,8 @@ SCRIPT_MODULES = [
     "scripts.diagnose_misclassification",
     "scripts.diagnose_rehab24",
     "scripts.diagnose_coord_space",
+    "scripts.diagnose_coords_C",
+    "scripts.build_benchmark_config",
     "scripts.evaluate_rules",
     "scripts.measure_smoothing_effect",
     "scripts.rotation_proxy_experiment",
@@ -46,8 +48,17 @@ def test_app_imports_without_parsing_argv_or_launching_anything():
 
 
 def test_pipeline_importable_standalone():
-    from src.pipeline import RepDetector, build_smoother, load_classifier_for_live_use, process_frame
+    from src.pipeline import (
+        RepDetector,
+        Session,
+        SessionState,
+        build_smoother,
+        load_classifier_for_live_use,
+        process_frame,
+    )
     assert RepDetector is not None
     assert callable(process_frame)
     assert callable(build_smoother)
     assert callable(load_classifier_for_live_use)
+    assert Session is not None
+    assert SessionState.IDLE == "IDLE"

@@ -1,0 +1,83 @@
+{
+  "exercise": "shoulder_abduction",
+  "notice": "Derived automatically from REHAB24-6 calibration-subject CORRECT reps (see derived_from below) -- a benchmark/reference config for scripts/benchmark_rehab24.py --config, NOT the live shipped config (config/exercises/shoulder_abduction.json is untouched by this file). A licensed physiotherapist must still review before any of this is used for real feedback.",
+  "derived_from": "REHAB24-6 calibration subjects",
+  "landmark_space": "world",
+  "n_reps": 58,
+  "subjects": [
+    1,
+    2,
+    6
+  ],
+  "date": "2026-10-27",
+  "commit": "b056da528e167f63a8e022bb50a8416771c1626e",
+  "percentiles": {
+    "peak_angle": {
+      "p5": 37.96213804518469,
+      "median": 116.0863523198903,
+      "p95": 160.92224320298936
+    },
+    "elbow_min": {
+      "p5": 46.9050364147163,
+      "median": 135.4307277174113,
+      "p95": 142.87624968932374
+    },
+    "trunk_max": {
+      "p5": 8.63081853277686,
+      "median": 15.96133591238661,
+      "p95": 26.90195350070981
+    },
+    "tempo_s": {
+      "p5": 3.995,
+      "median": 5.983333333333333,
+      "p95": 8.071666666666667
+    }
+  },
+  "target_peak_deg": {
+    "value": 99.4,
+    "status": "derived",
+    "comment": "(p5+p95)/2 of peak_angle across calibration-subject correct reps"
+  },
+  "tolerance_deg": {
+    "value": 61.5,
+    "status": "derived",
+    "comment": "(p95-p5)/2 of peak_angle, so [target-tolerance,target+tolerance]==[p5,p95]"
+  },
+  "min_elbow_straight_deg": {
+    "value": 46.9,
+    "status": "derived",
+    "comment": "p5 of elbow_min (lower bound only)"
+  },
+  "max_trunk_lean_deg": {
+    "value": 26.9,
+    "status": "derived",
+    "comment": "p95 of trunk_max (upper bound only)"
+  },
+  "tempo_min_s": {
+    "value": 4.0,
+    "status": "derived",
+    "comment": "p5 of tempo_s"
+  },
+  "tempo_max_s": {
+    "value": 8.07,
+    "status": "derived",
+    "comment": "p95 of tempo_s"
+  },
+  "cue_cooldown_s": {
+    "value": 8,
+    "status": "carried_over",
+    "comment": "not data-derived -- same operational default as config/exercises/shoulder_abduction.json"
+  },
+  "min_valid_fraction": {
+    "value": 0.7,
+    "status": "carried_over",
+    "comment": "not data-derived -- same operational default as config/exercises/shoulder_abduction.json"
+  },
+  "cues": {
+    "peak_angle": "Raise your arm closer to the target height.",
+    "elbow_straight": "Keep your elbow straighter as you raise your arm.",
+    "trunk_lean": "Keep your torso upright -- try not to lean.",
+    "tempo": "Move at a steadier, more controlled pace.",
+    "insufficient_data": "Keep your whole arm in view."
+  }
+}

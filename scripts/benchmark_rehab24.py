@@ -383,7 +383,12 @@ def part_e_fps(video_path: Path, RepDetectorClass, process_frame) -> float:
     return n_frames / elapsed if elapsed > 0 else float("nan")
 
 
-def main() -> None:
+def main(config_path: str | None = None) -> None:
+    """`config_path`, if given, overrides config/exercises/{EXERCISE}.json
+    with an arbitrary rules-config JSON (same schema -- see src/rules.py's
+    score_rep()) -- e.g. config/exercises/benchmarks/rehab24_abduction.json,
+    built by scripts/build_benchmark_config.py. Never writes to either
+    file; this only changes which thresholds (c) is scored against."""
     RESULTS_DIR.mkdir(exist_ok=True)
     commit, dirty = git_provenance()
     landmark_space = pose_estimation.load_config().get("landmark_space", "world")
@@ -397,7 +402,11 @@ def main() -> None:
           f"Evaluation subjects: {split['evaluation_subjects']}")
 
     RepDetectorClass = RepDetector
-    config = rules_module.load_config(EXERCISE)
+    if config_path:
+        config = json.loads(Path(config_path).read_text())
+        print(f"Using rules config override: {config_path}")
+    else:
+        config = rules_module.load_config(EXERCISE)
 
     print("\n[a] Rep detection...")
     part_a = part_a_rep_detection(manifest, RepDetectorClass, process_frame)
@@ -488,4 +497,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=str, default=None,
+                         help="Path to a rules config JSON to score against instead of "
+                              "config/exercises/shoulder_abduction.json (same schema), e.g. "
+                              "config/exercises/benchmarks/rehab24_abduction.json.")
+    args = parser.parse_args()
+    main(args.config)
