@@ -3,25 +3,45 @@ and data/rehab24_subject_split.json (built by scripts/build_rehab24_
 manifest.py) and runs, for Exercise 1 (arm abduction) reps:
 
   a) rep detection: RepDetector's count vs the dataset's annotated rep
-     count, per recording, per view.
+     count, per recording -- SPAN-RESTRICTED via src.pipeline.Session
+     (Start at the recording's own annotated span's first start_frame,
+     Stop right after its last end_frame), the same mechanism app.py's
+     --video --span uses. Reported separately per view (front, half-
+     profile, profile), per subject, with Wilson 95% CIs on every rate.
   b) angle fidelity: our MediaPipe-derived shoulder-trunk angle vs the
-     SAME compute_angle() on the 3D mocap joints, per view, on
-     evaluation subjects only.
-  c) rule scorer vs the dataset's own correctness labels, on evaluation
-     subjects only (config thresholds read, never changed); calibration-
-     subject percentiles printed separately for threshold-setting.
-  d) the UI-PRMD-trained classifier on the same reps, cross-domain,
-     same metrics as (c), clearly labelled.
-  e) measured FPS on one dataset video.
+     SAME compute_angle() on the 3D mocap joints, FRONT VIEW ONLY,
+     evaluation subjects -- a measurement result, NOT used to set or
+     adjust any threshold.
+  c) rule scorer vs the dataset's own correctness labels, FRONT VIEW
+     ONLY, evaluation subjects -- run TWICE (the derived benchmark
+     config and the live demo config), reported side by side: confusion
+     matrix, false-fail rate, detection rate, insufficient_data rate,
+     which rule fired, majority-class baseline, each with Wilson 95%
+     CIs, per subject and overall.
+  d) measured FPS on one dataset video (live MediaPipe, never cached --
+     this measures real throughput, not cache-lookup speed). Skipped
+     entirely under --rescore-only.
 
-Never retrains anything, never changes config/exercises/*.json. Output:
-results/rehab24_benchmark.md (+ a per-rep CSV, results/rehab24_benchmark.csv).
+The UI-PRMD classifier is NOT run in this script at all (removed from
+this run per task instruction -- see scripts/diagnose_misclassification.py
+for that separate cross-domain comparison). Never retrains anything,
+never changes config/exercises/*.json. Per-frame landmarks are sourced
+from scripts/landmark_cache.py (cache hit: no MediaPipe; cache miss:
+runs MediaPipe once, then caches) -- --rescore-only refuses to run
+MediaPipe at all, erroring out on any cache miss instead.
+
+Output: results/rehab24_benchmark.md (+ per-rep CSVs), every one
+starting with commit hash, dirty flag, landmark_space, config path,
+and the date.
 """
 
 import json
+import math
 import subprocess
 import sys
 import time
+from collections import Counter
+from datetime import date
 from pathlib import Path
 
 import cv2
@@ -30,19 +50,18 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from scripts import landmark_cache
+from src import pose_estimation
 from src import rules as rules_module
-from src.classifier import CorrectnessClassifier
 from src.feature_extraction import (
     check_confidence,
     compute_angle,
     compute_elbow_angle,
     compute_trunk_lean_deg,
     extract_features,
-    extract_rep_features,
     select_side,
 )
-from src import pose_estimation
-from src.pipeline import RepDetector, process_frame
+from src.pipeline import RepDetector, Session, process_frame
 from src.pose_estimation import get_pose_landmarks
 
 DATA_DIR = Path("data/rehab24_6")
@@ -50,6 +69,12 @@ MANIFEST_PATH = Path("data/rehab24_manifest.csv")
 SPLIT_PATH = Path("data/rehab24_subject_split.json")
 RESULTS_DIR = Path("results")
 EXERCISE = "shoulder_abduction"
+BENCHMARK_CONFIG_PATH = Path("config/exercises/benchmarks/rehab24_abduction.json")
+DEMO_CONFIG_PATH = rules_module.CONFIG_DIR / f"{EXERCISE}.json"
+
+# Set by main() from --rescore-only; read by every landmark-sourcing
+# helper below instead of being threaded through every call site.
+RESCORE_ONLY = False
 
 # Mocap joint indices (joints_names.txt) for the SAME (hip, shoulder,
 # elbow, wrist) roles feature_extraction.py uses -- right side only,
@@ -79,9 +104,11 @@ def git_provenance() -> tuple[str, bool]:
         return "unknown", True
 
 
-def write_csv_with_provenance(df: pd.DataFrame, path: Path, commit: str, dirty: bool, landmark_space: str) -> None:
+def write_csv_with_provenance(df: pd.DataFrame, path: Path, commit: str, dirty: bool,
+                               landmark_space: str, config_path: str, date_str: str) -> None:
     with path.open("w", newline="") as f:
-        f.write(f"# commit: {commit}\n# dirty: {dirty}\n# landmark_space: {landmark_space}\n")
+        f.write(f"# commit: {commit}\n# dirty: {dirty}\n# landmark_space: {landmark_space}\n"
+                f"# config: {config_path}\n# date: {date_str}\n")
         df.to_csv(f, index=False)
 
 
@@ -91,37 +118,71 @@ def load_manifest_and_split() -> tuple[pd.DataFrame, dict]:
     return manifest, split
 
 
+def wilson_interval(k: int, n: int, z: float = 1.959963984540054) -> tuple[float, float]:
+    """95% Wilson score interval for a proportion k/n (default z for 95%).
+    (nan, nan) if n == 0 -- no rate to report."""
+    if n == 0:
+        return float("nan"), float("nan")
+    phat = k / n
+    denom = 1 + z * z / n
+    center = (phat + z * z / (2 * n)) / denom
+    margin = (z * math.sqrt(phat * (1 - phat) / n + z * z / (4 * n * n))) / denom
+    return max(0.0, center - margin), min(1.0, center + margin)
+
+
+def rate_with_ci(k: int, n: int) -> str:
+    if n == 0:
+        return "N/A (n=0)"
+    lo, hi = wilson_interval(k, n)
+    return f"{k}/{n} ({k / n:.1%}, 95% CI [{lo:.1%}, {hi:.1%}])"
+
+
 # ---------------------------------------------------------------------------
-# (a) rep detection
+# landmark source: cache-backed (scripts/landmark_cache.py), respects
+# the module-level RESCORE_ONLY flag
 # ---------------------------------------------------------------------------
 
-def run_repdetector_on_recording(video_path: Path, RepDetectorClass, process_frame) -> int:
-    """Runs the whole recording through RepDetector (no smoothing, rules'
-    required joint roles), returns the number of rep_complete events."""
+def video_landmark_cache(video_path: Path) -> dict:
+    return landmark_cache.get_or_build(video_path, rescore_only=RESCORE_ONLY)
+
+
+# ---------------------------------------------------------------------------
+# (a) rep detection -- span-restricted via src.pipeline.Session
+# ---------------------------------------------------------------------------
+
+def recording_span(manifest: pd.DataFrame, video_id: str, camera: str) -> tuple[int, int]:
+    reps = manifest[(manifest["video_id"] == video_id) & (manifest["camera"] == camera)]
+    return int(reps["start_frame"].min()), int(reps["end_frame"].max())
+
+
+def run_repdetector_on_recording_span(video_path: Path, start_frame: int, end_frame: int) -> int:
+    """Session-gated (Start/Stop-equivalent) rep count over the WHOLE
+    recording: Session.start() fires exactly at frame_idx==start_frame,
+    Session.stop() right after processing frame_idx==end_frame -- frames
+    outside [start_frame, end_frame] are ignored by the rep detector
+    entirely, the same mechanism app.py's --video --span uses (both
+    drive src.pipeline.Session)."""
+    landmark_space = pose_estimation.load_config().get("landmark_space", "world")
+    cache = video_landmark_cache(video_path)
+    end_frame = min(end_frame, cache["frame_count"] - 1)
     required_roles = rules_module.required_joint_roles()
-    cap = cv2.VideoCapture(str(video_path))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    detector = RepDetectorClass()
-    parallel = {"elbow": [], "trunk": [], "total_frames": 0}
+    session = Session(EXERCISE)
     rep_count = 0
-    frame_idx = 0
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
+    fps = cache["fps"]
+    for frame_idx in range(cache["frame_count"]):
         t = frame_idx / fps
-        frame_idx += 1
-        landmarks = get_pose_landmarks(frame)
-        event, _payload, _visible, _failed = process_frame(
-            detector, parallel, landmarks, EXERCISE, None, t, required_roles,
-        )
+        if frame_idx == start_frame:
+            session.start()
+        landmarks = landmark_cache.landmarks_at(cache, frame_idx, landmark_space)
+        event, _payload, _visible, _failed = session.process_frame(landmarks, None, t, required_roles)
+        if frame_idx == end_frame:
+            session.stop()
         if event == "rep_complete":
             rep_count += 1
-    cap.release()
     return rep_count
 
 
-def part_a_rep_detection(manifest: pd.DataFrame, RepDetectorClass, process_frame) -> pd.DataFrame:
+def part_a_rep_detection(manifest: pd.DataFrame) -> pd.DataFrame:
     recordings = manifest.drop_duplicates(subset=["video_id", "camera"])[
         ["subject", "video_id", "camera", "view", "video"]
     ]
@@ -132,18 +193,45 @@ def part_a_rep_detection(manifest: pd.DataFrame, RepDetectorClass, process_frame
         if not video_path.exists():
             print(f"  MISSING video: {video_path} -- skipped")
             continue
-        detected = run_repdetector_on_recording(video_path, RepDetectorClass, process_frame)
+        start_frame, end_frame = recording_span(manifest, rec["video_id"], rec["camera"])
+        try:
+            detected = run_repdetector_on_recording_span(video_path, start_frame, end_frame)
+        except RuntimeError as exc:
+            print(f"  SKIPPED {rec['video_id']} ({rec['camera']}): {exc}")
+            continue
         rows.append({
-            "subject": rec["subject"], "video_id": rec["video_id"], "camera": rec["camera"],
+            "subject": int(rec["subject"]), "video_id": rec["video_id"], "camera": rec["camera"],
             "view": rec["view"], "annotated_reps": annotated, "detected_reps": detected,
-            "abs_error": abs(annotated - detected),
+            "signed_error": detected - annotated, "abs_error": abs(annotated - detected),
+            "exact_match": int(annotated == detected),
         })
-        print(f"  {rec['video_id']} ({rec['camera']}, {rec['view']}): annotated={annotated} detected={detected}")
+        print(f"  {rec['video_id']} ({rec['camera']}, {rec['view']}): annotated={annotated} detected={detected} "
+              f"span=({start_frame},{end_frame})")
     return pd.DataFrame(rows)
 
 
+def rep_detection_report_lines(df: pd.DataFrame) -> list[str]:
+    if df.empty:
+        return ["N/A -- no recordings processed.\n"]
+    lines = []
+    for view in sorted(df["view"].unique()):
+        sub = df[df["view"] == view]
+        k, n = int(sub["exact_match"].sum()), len(sub)
+        lines.append(f"\n### view={view}\n")
+        lines.append(f"Exact-match rate: {rate_with_ci(k, n)}  "
+                      f"mean signed_error={sub['signed_error'].mean():+.2f} (std={sub['signed_error'].std():.2f})  "
+                      f"n={n} recordings\n")
+        lines.append("| subject | n recordings | exact-match rate (95% CI) | mean signed_error |")
+        lines.append("|---|---|---|---|")
+        for subject in sorted(sub["subject"].unique()):
+            ssub = sub[sub["subject"] == subject]
+            k_s, n_s = int(ssub["exact_match"].sum()), len(ssub)
+            lines.append(f"| {subject} | {n_s} | {rate_with_ci(k_s, n_s)} | {ssub['signed_error'].mean():+.2f} |")
+    return lines
+
+
 # ---------------------------------------------------------------------------
-# (b) angle fidelity
+# (b) angle fidelity -- front view only, evaluation subjects, measurement only
 # ---------------------------------------------------------------------------
 
 def load_mocap_joints(video_id: str) -> np.ndarray | None:
@@ -173,85 +261,92 @@ def mediapipe_angle_series_for_rep(video_path: Path, start_frame: int, end_frame
     """Per-frame compute_shoulder_abduction_angle() (via extract_features)
     over [start_frame, end_frame], None where confidence-gated invalid.
     Uses the exercise's own base required roles (not the rules' wrist-
-    inclusive set) since this is a geometry comparison, not a scoring run.
+    inclusive set) since this is a geometry comparison, not a scoring
+    run. Landmarks come from the per-video cache (scripts/landmark_
+    cache.py) -- cache hit: no MediaPipe; cache miss: runs it once.
     """
-    cap = cv2.VideoCapture(str(video_path))
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    landmark_space = pose_estimation.load_config().get("landmark_space", "world")
+    cache = video_landmark_cache(video_path)
+    end_frame = min(end_frame, cache["frame_count"] - 1)
     angles = []
-    for _ in range(end_frame - start_frame + 1):
-        ok, frame = cap.read()
-        if not ok:
-            break
-        landmarks = get_pose_landmarks(frame)
+    for frame_idx in range(start_frame, end_frame + 1):
+        landmarks = landmark_cache.landmarks_at(cache, frame_idx, landmark_space)
         features = extract_features(landmarks, EXERCISE) if landmarks is not None else None
         angles.append(features["angle_deg"] if features else None)
-    cap.release()
     return angles
 
 
-def part_b_angle_fidelity(manifest: pd.DataFrame, split: dict) -> pd.DataFrame:
-    eval_manifest = manifest[manifest["subject"].isin(split["evaluation_subjects"])]
-    eval_manifest = eval_manifest[eval_manifest["view"].isin(["front", "profile"])]
-
+def part_b_angle_fidelity_front(manifest: pd.DataFrame, split: dict) -> pd.DataFrame:
+    eval_front = manifest[manifest["subject"].isin(split["evaluation_subjects"]) & (manifest["view"] == "front")]
     rows = []
-    for _, rep in eval_manifest.iterrows():
+    for _, rep in eval_front.iterrows():
         video_path = DATA_DIR / "videos" / rep["video"]
         joints = load_mocap_joints(rep["video_id"])
         if not video_path.exists() or joints is None:
             continue
-        mp_angles = mediapipe_angle_series_for_rep(video_path, rep["start_frame"], rep["end_frame"])
+        try:
+            mp_angles = mediapipe_angle_series_for_rep(video_path, int(rep["start_frame"]), int(rep["end_frame"]))
+        except RuntimeError as exc:
+            print(f"  SKIPPED {rep['video_id']}: {exc}")
+            continue
         mocap_angles = [
-            mocap_shoulder_trunk_angle(joints[f]) for f in range(rep["start_frame"], rep["end_frame"] + 1)
+            mocap_shoulder_trunk_angle(joints[f]) for f in range(int(rep["start_frame"]), int(rep["end_frame"]) + 1)
             if f < len(joints)
         ]
         n = min(len(mp_angles), len(mocap_angles))
         for i in range(n):
             if mp_angles[i] is not None:
                 rows.append({
-                    "subject": rep["subject"], "view": rep["view"],
+                    "subject": int(rep["subject"]), "view": rep["view"],
                     "mediapipe_deg": mp_angles[i], "mocap_deg": mocap_angles[i],
                 })
     df = pd.DataFrame(rows)
-    if df.empty:
-        return df
-    df["error_deg"] = df["mediapipe_deg"] - df["mocap_deg"]
+    if not df.empty:
+        df["error_deg"] = df["mediapipe_deg"] - df["mocap_deg"]
     return df
 
 
-def summarize_angle_fidelity(df: pd.DataFrame) -> dict:
-    summary = {}
-    for view in ("front", "profile"):
-        sub = df[df["view"] == view]
+def angle_fidelity_report_lines(df: pd.DataFrame) -> list[str]:
+    lines = ["**Measurement result only -- NOT used to set or adjust any threshold.**\n"]
+    if df.empty:
+        return lines + ["N/A -- no front-view angle-fidelity data for evaluation subjects.\n"]
+    mae, bias = df["error_deg"].abs().mean(), df["error_deg"].mean()
+    corr = df["mediapipe_deg"].corr(df["mocap_deg"])
+    lines.append(f"Overall (front view, evaluation subjects): n={len(df)} frames  MAE={mae:.2f} deg  "
+                  f"bias={bias:+.2f} deg  corr={corr:.3f}\n")
+    lines.append("| subject | n frames | MAE (deg) | bias (deg) | corr |")
+    lines.append("|---|---|---|---|---|")
+    for subject in sorted(df["subject"].unique()):
+        sub = df[df["subject"] == subject]
         if len(sub) < 2:
-            summary[view] = None
+            lines.append(f"| {subject} | {len(sub)} | N/A | N/A | N/A |")
             continue
-        mae = sub["error_deg"].abs().mean()
-        bias = sub["error_deg"].mean()
-        corr = sub["mediapipe_deg"].corr(sub["mocap_deg"])
-        summary[view] = {"n": len(sub), "mae_deg": mae, "bias_deg": bias, "correlation": corr}
-    return summary
+        lines.append(f"| {subject} | {len(sub)} | {sub['error_deg'].abs().mean():.2f} | "
+                      f"{sub['error_deg'].mean():+.2f} | {sub['mediapipe_deg'].corr(sub['mocap_deg']):.3f} |")
+    return lines
 
 
 # ---------------------------------------------------------------------------
-# (c)/(d) scorer / classifier vs labels
+# (c) rule scorer vs labels -- front view only, evaluation subjects,
+# two configs side by side. Classifier NOT run in this script.
 # ---------------------------------------------------------------------------
 
 def rep_feature_sequences(video_path: Path, start_frame: int, end_frame: int):
     """Per-rep angle_deg/elbow_angle_deg/trunk_lean_deg + valid_fraction,
     confidence-gated with rules.required_joint_roles() -- same gate as
-    live scoring."""
+    live scoring. Landmarks come from the per-video cache (scripts/
+    landmark_cache.py) -- cache hit: no MediaPipe; cache miss: runs it
+    once, respecting the module-level RESCORE_ONLY flag."""
+    landmark_space = pose_estimation.load_config().get("landmark_space", "world")
     required_roles = rules_module.required_joint_roles()
-    cap = cv2.VideoCapture(str(video_path))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0  # must read before release() -- a released capture returns -1 (truthy!)
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    cache = video_landmark_cache(video_path)
+    fps = cache["fps"]
+    end_frame = min(end_frame, cache["frame_count"] - 1)
     angle, elbow, trunk = [], [], []
     total = 0
-    for _ in range(end_frame - start_frame + 1):
-        ok, frame = cap.read()
-        if not ok:
-            break
+    for frame_idx in range(start_frame, end_frame + 1):
         total += 1
-        landmarks = get_pose_landmarks(frame)
+        landmarks = landmark_cache.landmarks_at(cache, frame_idx, landmark_space)
         if landmarks is None:
             continue
         side = select_side(landmarks)
@@ -262,109 +357,105 @@ def rep_feature_sequences(video_path: Path, start_frame: int, end_frame: int):
         angle.append(features["angle_deg"])
         elbow.append(compute_elbow_angle(landmarks))
         trunk.append(compute_trunk_lean_deg(landmarks))
-    cap.release()
     valid_fraction = len(angle) / total if total else 0.0
     return {"angle_deg": angle, "elbow_angle_deg": elbow, "trunk_lean_deg": trunk, "valid_fraction": valid_fraction}, fps
 
 
-def part_c_and_d_rules_and_classifier_vs_labels(
-    manifest: pd.DataFrame, split: dict, config: dict, classifier: CorrectnessClassifier | None,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Computes rep_feature_sequences() ONCE per evaluation rep and feeds
-    it to both the rule scorer and the UI-PRMD classifier, instead of
-    running MediaPipe over the same rep segment twice."""
-    eval_manifest = manifest[manifest["subject"].isin(split["evaluation_subjects"])]
-    rows_c, rows_d = [], []
-    for _, rep in eval_manifest.iterrows():
+def part_c_rules_vs_labels_front(manifest: pd.DataFrame, split: dict, config: dict) -> pd.DataFrame:
+    eval_front = manifest[manifest["subject"].isin(split["evaluation_subjects"]) & (manifest["view"] == "front")]
+    rows = []
+    for _, rep in eval_front.iterrows():
         video_path = DATA_DIR / "videos" / rep["video"]
         if not video_path.exists():
             continue
-        seq, fps = rep_feature_sequences(video_path, rep["start_frame"], rep["end_frame"])
-
+        try:
+            seq, fps = rep_feature_sequences(video_path, int(rep["start_frame"]), int(rep["end_frame"]))
+        except RuntimeError as exc:
+            print(f"  SKIPPED {rep['video_id']}: {exc}")
+            continue
         if len(seq["angle_deg"]) == 0:
-            status_c, failed_rules = "insufficient_data", []
+            status, failed_rules = "insufficient_data", []
         else:
             result = rules_module.score_rep(seq, config, fps)
-            status_c, failed_rules = result["status"], result["failed_rules"]
-        rows_c.append({
-            "subject": rep["subject"], "view": rep["view"], "label": rep["label"],
-            "status": status_c, "failed_rules": ";".join(failed_rules),
+            status, failed_rules = result["status"], result["failed_rules"]
+        rows.append({
+            "subject": int(rep["subject"]), "view": rep["view"], "label": rep["label"],
+            "status": status, "failed_rules": ";".join(failed_rules),
         })
-
-        if classifier is not None:
-            if len(seq["angle_deg"]) == 0:
-                status_d = "insufficient_data"
-            else:
-                agg = extract_rep_features(pd.DataFrame({"angle_deg": seq["angle_deg"]}))
-                result = classifier.predict(agg)
-                status_d = "pass" if result["is_correct"] else "fail"
-            rows_d.append({"subject": rep["subject"], "view": rep["view"], "label": rep["label"], "status": status_d})
-
-    return pd.DataFrame(rows_c), pd.DataFrame(rows_d)
+    return pd.DataFrame(rows)
 
 
-def confusion_and_rates(df: pd.DataFrame, view: str) -> dict:
-    sub = df[df["view"] == view]
-    scorable = sub[sub["status"] != "insufficient_data"]
-    insufficient_rate = len(sub) - len(scorable), len(sub)
-
-    confusion = {"correct": {"pass": 0, "fail": 0}, "incorrect": {"pass": 0, "fail": 0}}
-    for _, r in scorable.iterrows():
-        gt = "correct" if r["label"] == "correct" else "incorrect"
-        confusion[gt][r["status"]] += 1
-
+def scorer_rates(df: pd.DataFrame) -> dict:
+    scorable = df[df["status"] != "insufficient_data"]
     correct_rows = scorable[scorable["label"] == "correct"]
     incorrect_rows = scorable[scorable["label"] == "incorrect"]
-    false_fail_rate = (confusion["correct"]["fail"], len(correct_rows))
-    detection_rate = (confusion["incorrect"]["fail"], len(incorrect_rows))
-
-    majority_label = sub["label"].mode().iloc[0] if len(sub) else None
-    majority_correct = (sub["label"] == majority_label).sum()
-    majority_baseline = (majority_correct, len(sub))
-
+    confusion = {
+        "correct": {"pass": int((correct_rows["status"] == "pass").sum()), "fail": int((correct_rows["status"] == "fail").sum())},
+        "incorrect": {"pass": int((incorrect_rows["status"] == "pass").sum()), "fail": int((incorrect_rows["status"] == "fail").sum())},
+    }
+    majority_label = df["label"].mode().iloc[0] if len(df) else None
+    maj_k = int((df["label"] == majority_label).sum()) if majority_label is not None else 0
+    rule_fire_counts = Counter(
+        r for s in scorable[scorable["status"] == "fail"]["failed_rules"] for r in (s.split(";") if s else [])
+    )
     return {
-        "confusion": confusion, "false_fail_rate": false_fail_rate, "detection_rate": detection_rate,
-        "insufficient_rate": insufficient_rate, "majority_baseline": majority_baseline,
+        "confusion": confusion,
+        "false_fail": (confusion["correct"]["fail"], len(correct_rows)),
+        "detection": (confusion["incorrect"]["fail"], len(incorrect_rows)),
+        "insufficient": (len(df) - len(scorable), len(df)),
+        "majority_baseline": (maj_k, len(df)),
+        "rule_fire_counts": dict(rule_fire_counts),
     }
 
 
-def calibration_percentiles(manifest: pd.DataFrame, split: dict) -> dict:
-    calib_manifest = manifest[
-        (manifest["subject"].isin(split["calibration_subjects"])) & (manifest["label"] == "correct")
-    ]
-    rows = []
-    for _, rep in calib_manifest.iterrows():
-        video_path = DATA_DIR / "videos" / rep["video"]
-        if not video_path.exists():
-            continue
-        seq, fps = rep_feature_sequences(video_path, rep["start_frame"], rep["end_frame"])
-        if len(seq["angle_deg"]) == 0:
-            continue
-        rows.append({
-            "peak_angle": max(seq["angle_deg"]), "elbow_min": min(seq["elbow_angle_deg"]),
-            "trunk_max": max(seq["trunk_lean_deg"]), "tempo_s": len(seq["angle_deg"]) / fps,
-        })
-    df = pd.DataFrame(rows)
+def per_subject_scorer_lines(df: pd.DataFrame) -> list[str]:
     if df.empty:
-        return {}
-    return {
-        col: {
-            "n": len(df), "min": df[col].min(), "p25": df[col].quantile(0.25),
-            "median": df[col].median(), "p75": df[col].quantile(0.75), "max": df[col].max(),
-        }
-        for col in ("peak_angle", "elbow_min", "trunk_max", "tempo_s")
-    }
+        return ["N/A\n"]
+    lines = ["| subject | n reps | false-fail (95% CI) | detection (95% CI) | insufficient_data (95% CI) | majority_baseline (95% CI) |",
+              "|---|---|---|---|---|---|"]
+    for subject in sorted(df["subject"].unique()):
+        sub = df[df["subject"] == subject]
+        r = scorer_rates(sub)
+        lines.append(f"| {subject} | {len(sub)} | {rate_with_ci(*r['false_fail'])} | {rate_with_ci(*r['detection'])} | "
+                      f"{rate_with_ci(*r['insufficient'])} | {rate_with_ci(*r['majority_baseline'])} |")
+    return lines
+
+
+def part_c_report_lines(df_benchmark: pd.DataFrame, df_demo: pd.DataFrame,
+                         benchmark_config_path: Path, demo_config_path: Path) -> list[str]:
+    lines = [f"**Front view, evaluation subjects only. Classifier NOT run.** "
+             f"Benchmark config: `{benchmark_config_path}`  Demo config: `{demo_config_path}`\n"]
+    if df_benchmark.empty and df_demo.empty:
+        return lines + ["N/A -- no front-view evaluation-subject reps scored.\n"]
+
+    r_bench, r_demo = scorer_rates(df_benchmark), scorer_rates(df_demo)
+    lines.append("| metric | benchmark config | demo config |")
+    lines.append("|---|---|---|")
+    lines.append(f"| false-fail rate (correct reps scored fail) | {rate_with_ci(*r_bench['false_fail'])} | {rate_with_ci(*r_demo['false_fail'])} |")
+    lines.append(f"| detection rate (incorrect reps scored fail) | {rate_with_ci(*r_bench['detection'])} | {rate_with_ci(*r_demo['detection'])} |")
+    lines.append(f"| insufficient_data rate | {rate_with_ci(*r_bench['insufficient'])} | {rate_with_ci(*r_demo['insufficient'])} |")
+    lines.append(f"| majority-class baseline | {rate_with_ci(*r_bench['majority_baseline'])} | {rate_with_ci(*r_demo['majority_baseline'])} |")
+    lines.append(f"| confusion matrix | {r_bench['confusion']} | {r_demo['confusion']} |")
+    lines.append(f"| which rule fired (fail reps) | {r_bench['rule_fire_counts']} | {r_demo['rule_fire_counts']} |")
+
+    lines.append("\n#### per-subject (benchmark config)\n")
+    lines.extend(per_subject_scorer_lines(df_benchmark))
+    lines.append("\n#### per-subject (demo config)\n")
+    lines.extend(per_subject_scorer_lines(df_demo))
+    return lines
 
 
 # ---------------------------------------------------------------------------
-# (e) FPS
+# (d) FPS -- live MediaPipe only, never cached; skipped under --rescore-only
 # ---------------------------------------------------------------------------
 
-def part_e_fps(video_path: Path, RepDetectorClass, process_frame) -> float:
+def part_e_fps(video_path: Path) -> float | None:
+    if RESCORE_ONLY:
+        return None
     required_roles = rules_module.required_joint_roles()
     cap = cv2.VideoCapture(str(video_path))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    detector = RepDetectorClass()
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0  # must read before release() -- a released capture returns -1 (truthy!)
+    detector = RepDetector()
     parallel = {"elbow": [], "trunk": [], "total_frames": 0}
     n_frames = 0
     frame_idx = 0
@@ -375,7 +466,7 @@ def part_e_fps(video_path: Path, RepDetectorClass, process_frame) -> float:
             break
         t = frame_idx / fps
         frame_idx += 1
-        landmarks = get_pose_landmarks(frame)
+        landmarks = get_pose_landmarks(frame)  # LIVE, never cached -- measures real MediaPipe throughput
         process_frame(detector, parallel, landmarks, EXERCISE, None, t, required_roles)
         n_frames += 1
     elapsed = time.perf_counter() - start_t
@@ -383,16 +474,26 @@ def part_e_fps(video_path: Path, RepDetectorClass, process_frame) -> float:
     return n_frames / elapsed if elapsed > 0 else float("nan")
 
 
-def main(config_path: str | None = None) -> None:
-    """`config_path`, if given, overrides config/exercises/{EXERCISE}.json
-    with an arbitrary rules-config JSON (same schema -- see src/rules.py's
-    score_rep()) -- e.g. config/exercises/benchmarks/rehab24_abduction.json,
-    built by scripts/build_benchmark_config.py. Never writes to either
-    file; this only changes which thresholds (c) is scored against."""
+def main(config_path: str | None = None, rescore_only: bool = False) -> None:
+    """`config_path`, if given, overrides which file is treated as "the
+    benchmark config" in part (c)'s side-by-side comparison (default:
+    BENCHMARK_CONFIG_PATH, built by scripts/build_benchmark_config.py).
+    The demo config (DEMO_CONFIG_PATH) is always the second, fixed side
+    of that comparison. `rescore_only`, if True, refuses to run
+    MediaPipe at all -- every video must already have a landmark_cache
+    entry (see scripts/landmark_cache.py), and (d) FPS is skipped
+    entirely (it inherently measures live MediaPipe throughput)."""
+    global RESCORE_ONLY
+    RESCORE_ONLY = rescore_only
+
     RESULTS_DIR.mkdir(exist_ok=True)
     commit, dirty = git_provenance()
     landmark_space = pose_estimation.load_config().get("landmark_space", "world")
-    print(f"Provenance: commit={commit}  dirty={dirty}  landmark_space={landmark_space}")
+    today = date.today().isoformat()
+    benchmark_config_path = Path(config_path) if config_path else BENCHMARK_CONFIG_PATH
+    print(f"Provenance: commit={commit}  dirty={dirty}  landmark_space={landmark_space}  date={today}  "
+          f"rescore_only={RESCORE_ONLY}")
+    print(f"Benchmark config: {benchmark_config_path}   Demo config: {DEMO_CONFIG_PATH}")
     if not MANIFEST_PATH.exists() or not SPLIT_PATH.exists():
         print(f"Missing {MANIFEST_PATH} or {SPLIT_PATH} -- run scripts/build_rehab24_manifest.py first.")
         return
@@ -401,96 +502,63 @@ def main(config_path: str | None = None) -> None:
     print(f"Manifest: {len(manifest)} rows. Calibration subjects: {split['calibration_subjects']}  "
           f"Evaluation subjects: {split['evaluation_subjects']}")
 
-    RepDetectorClass = RepDetector
-    if config_path:
-        config = json.loads(Path(config_path).read_text())
-        print(f"Using rules config override: {config_path}")
-    else:
-        config = rules_module.load_config(EXERCISE)
+    config_benchmark = json.loads(benchmark_config_path.read_text())
+    config_demo = json.loads(DEMO_CONFIG_PATH.read_text())
 
-    print("\n[a] Rep detection...")
-    part_a = part_a_rep_detection(manifest, RepDetectorClass, process_frame)
+    print("\n[a] Rep detection (span-restricted via src.pipeline.Session, all subjects/cameras/views)...")
+    part_a = part_a_rep_detection(manifest)
 
-    print("\n[b] Angle fidelity...")
-    part_b = part_b_angle_fidelity(manifest, split)
+    print("\n[b] Angle fidelity vs mocap (front view, evaluation subjects -- measurement only)...")
+    part_b = part_b_angle_fidelity_front(manifest, split)
 
-    classifier_path = Path("models/shoulder_abduction.pkl")
-    classifier = None
-    if classifier_path.exists():
-        classifier = CorrectnessClassifier()
-        classifier.load(classifier_path)
-    else:
-        print(f"\n[d] SKIPPED -- no trained classifier at {classifier_path}")
+    print("\n[c] Rule scorer vs labels (front view, evaluation subjects) -- benchmark config...")
+    part_c_benchmark = part_c_rules_vs_labels_front(manifest, split, config_benchmark)
+    print("[c] ... demo config...")
+    part_c_demo = part_c_rules_vs_labels_front(manifest, split, config_demo)
 
-    print("\n[c+d] Rule scorer and UI-PRMD classifier (cross-domain) vs labels...")
-    part_c, part_d = part_c_and_d_rules_and_classifier_vs_labels(manifest, split, config, classifier)
-
-    print("\n[e] Measured FPS...")
+    print(f"\n[d] Measured FPS...{' SKIPPED (--rescore-only)' if RESCORE_ONLY else ''}")
     sample_video = None
     for _, rec in manifest.drop_duplicates(subset=["video"]).iterrows():
         candidate = DATA_DIR / "videos" / rec["video"]
         if candidate.exists():
             sample_video = candidate
             break
-    fps_measured = part_e_fps(sample_video, RepDetectorClass, process_frame) if sample_video else None
-
-    calib_pct = calibration_percentiles(manifest, split)
+    fps_measured = part_e_fps(sample_video) if sample_video else None
 
     # ---- write outputs ----
     if not part_a.empty:
-        write_csv_with_provenance(part_a, RESULTS_DIR / "rehab24_rep_detection.csv", commit, dirty, landmark_space)
+        write_csv_with_provenance(part_a, RESULTS_DIR / "rehab24_rep_detection.csv", commit, dirty,
+                                   landmark_space, str(benchmark_config_path), today)
     if not part_b.empty:
-        write_csv_with_provenance(part_b, RESULTS_DIR / "rehab24_angle_fidelity.csv", commit, dirty, landmark_space)
-    if not part_c.empty:
-        write_csv_with_provenance(part_c, RESULTS_DIR / "rehab24_scorer_vs_labels.csv", commit, dirty, landmark_space)
-    if not part_d.empty:
-        write_csv_with_provenance(part_d, RESULTS_DIR / "rehab24_classifier_vs_labels.csv", commit, dirty, landmark_space)
+        write_csv_with_provenance(part_b, RESULTS_DIR / "rehab24_angle_fidelity.csv", commit, dirty,
+                                   landmark_space, str(benchmark_config_path), today)
+    if not part_c_benchmark.empty:
+        write_csv_with_provenance(part_c_benchmark, RESULTS_DIR / "rehab24_scorer_vs_labels_benchmark.csv", commit,
+                                   dirty, landmark_space, str(benchmark_config_path), today)
+    if not part_c_demo.empty:
+        write_csv_with_provenance(part_c_demo, RESULTS_DIR / "rehab24_scorer_vs_labels_demo.csv", commit, dirty,
+                                   landmark_space, str(DEMO_CONFIG_PATH), today)
 
     lines = ["# REHAB24-6 benchmark -- shoulder_abduction\n"]
     lines.append(f"_commit: `{commit}` (working tree {'dirty' if dirty else 'clean'})_\n")
     lines.append(f"_landmark_space: `{landmark_space}` (config/pose.json)_\n")
+    lines.append(f"_config: benchmark=`{benchmark_config_path}`  demo=`{DEMO_CONFIG_PATH}`_\n")
+    lines.append(f"_date: {today}_\n")
     lines.append(f"Calibration subjects: {split['calibration_subjects']}  "
                   f"Evaluation subjects: {split['evaluation_subjects']}\n")
 
-    lines.append("## (a) Rep detection\n")
-    if not part_a.empty:
-        exact = (part_a["annotated_reps"] == part_a["detected_reps"]).mean()
-        mae = part_a["abs_error"].mean()
-        lines.append(f"Exact-match rate: {exact:.1%}  Mean abs error: {mae:.2f} reps  (n={len(part_a)} recordings)\n")
-        for view in part_a["view"].unique():
-            sub = part_a[part_a["view"] == view]
-            lines.append(f"- {view}: exact-match={  (sub['annotated_reps']==sub['detected_reps']).mean():.1%}  "
-                          f"MAE={sub['abs_error'].mean():.2f}  n={len(sub)}")
-    else:
-        lines.append("N/A -- no recordings processed.\n")
+    lines.append("\n## (a) Rep detection (span-restricted)\n")
+    lines.extend(rep_detection_report_lines(part_a))
 
-    lines.append("\n## (b) Angle fidelity (evaluation subjects, front/profile only)\n")
-    if not part_b.empty:
-        for view, s in summarize_angle_fidelity(part_b).items():
-            lines.append(f"- {view}: {s}" if s else f"- {view}: N/A")
-    else:
-        lines.append("N/A -- no angle-fidelity data.\n")
+    lines.append("\n## (b) Angle fidelity (front view, evaluation subjects)\n")
+    lines.extend(angle_fidelity_report_lines(part_b))
 
-    for label, df in (("(c) rule scorer", part_c), ("(d) UI-PRMD classifier (cross-domain)", part_d)):
-        lines.append(f"\n## {label} vs labels (evaluation subjects)\n")
-        if df.empty:
-            lines.append("N/A\n")
-            continue
-        for view in ("front", "profile"):
-            if view not in df["view"].unique():
-                continue
-            r = confusion_and_rates(df, view)
-            lines.append(f"- {view}: confusion={r['confusion']}  "
-                          f"false_fail={r['false_fail_rate'][0]}/{r['false_fail_rate'][1]}  "
-                          f"detection={r['detection_rate'][0]}/{r['detection_rate'][1]}  "
-                          f"insufficient_data={r['insufficient_rate'][0]}/{r['insufficient_rate'][1]}  "
-                          f"majority_baseline={r['majority_baseline'][0]}/{r['majority_baseline'][1]}")
+    lines.append("\n## (c) Rule scorer vs labels (front view, evaluation subjects)\n")
+    lines.extend(part_c_report_lines(part_c_benchmark, part_c_demo, benchmark_config_path, DEMO_CONFIG_PATH))
 
-    lines.append("\n## Calibration-subject percentiles (correct reps)\n")
-    lines.append(json.dumps(calib_pct, indent=2, default=float) if calib_pct else "N/A")
-
-    lines.append(f"\n## (e) Measured FPS\n")
-    lines.append(f"{fps_measured:.1f} fps on {sample_video}" if fps_measured else "N/A")
+    lines.append("\n## (d) Measured FPS\n")
+    lines.append(f"{fps_measured:.1f} fps on {sample_video}" if fps_measured else
+                 ("N/A (--rescore-only)" if RESCORE_ONLY else "N/A"))
 
     (RESULTS_DIR / "rehab24_benchmark.md").write_text("\n".join(lines))
     print(f"\nWrote {RESULTS_DIR / 'rehab24_benchmark.md'}")
@@ -501,8 +569,11 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=str, default=None,
-                         help="Path to a rules config JSON to score against instead of "
-                              "config/exercises/shoulder_abduction.json (same schema), e.g. "
-                              "config/exercises/benchmarks/rehab24_abduction.json.")
+                         help="Path to the rules config JSON to use as the 'benchmark config' side of part "
+                              "(c)'s comparison, instead of config/exercises/benchmarks/rehab24_abduction.json "
+                              "(the demo config, config/exercises/shoulder_abduction.json, is always the other side).")
+    parser.add_argument("--rescore-only", action="store_true",
+                         help="Never run MediaPipe -- every video must already have a scripts/landmark_cache.py "
+                              "entry, or this errors out. Part (d) FPS is skipped entirely in this mode.")
     args = parser.parse_args()
-    main(args.config)
+    main(args.config, args.rescore_only)
