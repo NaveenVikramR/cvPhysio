@@ -23,7 +23,7 @@ import streamlit as st
 
 from src import rules as rules_module
 from src import smoothing as smoothing_module
-from src.classifier import CorrectnessClassifier, is_within_correct_range
+from src.classifier import FEATURE_COLUMNS, CorrectnessClassifier, is_within_correct_range
 from src.feature_extraction import (
     EXERCISES,
     check_confidence,
@@ -43,6 +43,12 @@ CLASSIFIER_WARNING = (
     "not webcam video, and is not calibrated for webcam input "
     "(see scripts/diagnose_misclassification.py). Treat its output with caution."
 )
+# The only feature_source src/dataset_loader.py's FK positions produce and
+# the live path actually computes -- see that module's docstring for why
+# "angles_file" (the other feature_source it supports) is not what app.py
+# needs. A metadata.json recorded with any other value was not trained on
+# what this pipeline feeds the classifier at inference time.
+LIVE_FEATURE_SOURCE = "fk_positions"
 
 
 def parse_args():
@@ -295,6 +301,52 @@ def build_smoother():
     )
 
 
+def load_classifier_for_live_use(
+    exercise: str, models_dir: Path = MODELS_DIR,
+) -> tuple[CorrectnessClassifier | None, dict | None]:
+    """Loads {models_dir}/{exercise}.pkl, but only after its sidecar
+    {models_dir}/{exercise}.metadata.json confirms it was trained on the
+    SAME feature names (and order) and feature_source the live path
+    actually computes (FEATURE_COLUMNS, LIVE_FEATURE_SOURCE) -- refusing
+    with a clear RuntimeError otherwise, rather than silently scoring
+    with a model trained on different features than this pipeline
+    produces. `models_dir` defaults to the real MODELS_DIR; overridable
+    so tests can point it at a fixture directory.
+
+    Returns (None, None) if no model file exists at all (the existing,
+    unchanged "no trained model" case -- not an error, just nothing to
+    load yet). Returns (classifier, correct_feature_ranges) on success.
+    """
+    model_path = models_dir / f"{exercise}.pkl"
+    metadata_path = models_dir / f"{exercise}.metadata.json"
+    if not model_path.exists():
+        return None, None
+
+    if not metadata_path.exists():
+        raise RuntimeError(
+            f"Refusing to load {model_path}: no sidecar metadata at {metadata_path} "
+            f"to verify it was trained on the features this pipeline actually computes."
+        )
+
+    metadata = json.loads(metadata_path.read_text())
+    metadata_features = metadata.get("feature_names")
+    if metadata_features != FEATURE_COLUMNS:
+        raise RuntimeError(
+            f"Refusing to load {model_path}: metadata feature_names {metadata_features} "
+            f"do not match the live path's {FEATURE_COLUMNS}."
+        )
+    metadata_source = metadata.get("feature_source")
+    if metadata_source != LIVE_FEATURE_SOURCE:
+        raise RuntimeError(
+            f"Refusing to load {model_path}: metadata feature_source {metadata_source!r} "
+            f"!= {LIVE_FEATURE_SOURCE!r} (the only source the live pipeline computes)."
+        )
+
+    classifier = CorrectnessClassifier()
+    classifier.load(model_path)
+    return classifier, metadata.get("correct_feature_ranges")
+
+
 def run_headless(video_path: str, exercise: str, scorer: str) -> None:
     """--video path: score a video file frame-by-frame with no Streamlit
     UI, printing per-rep results to stdout. Used for verification against
@@ -319,15 +371,14 @@ def run_headless(video_path: str, exercise: str, scorer: str) -> None:
         required_roles = rules_module.required_joint_roles()
     else:
         print(CLASSIFIER_WARNING)
-        model_path = MODELS_DIR / f"{exercise}.pkl"
-        metadata_path = MODELS_DIR / f"{exercise}.metadata.json"
-        if model_path.exists():
-            classifier = CorrectnessClassifier()
-            classifier.load(model_path)
-            if metadata_path.exists():
-                correct_feature_ranges = json.loads(metadata_path.read_text()).get("correct_feature_ranges")
-        else:
-            print(f"No trained model at {model_path} -- cannot score with --scorer classifier.")
+        try:
+            classifier, correct_feature_ranges = load_classifier_for_live_use(exercise)
+        except RuntimeError as exc:
+            print(str(exc))
+            cap.release()
+            return
+        if classifier is None:
+            print(f"No trained model at {MODELS_DIR / f'{exercise}.pkl'} -- cannot score with --scorer classifier.")
             cap.release()
             return
 
@@ -399,15 +450,13 @@ correct_feature_ranges = None
 rules_config = None
 if ARGS.scorer == "classifier":
     st.warning(CLASSIFIER_WARNING)
-    model_path = MODELS_DIR / f"{exercise}.pkl"
-    metadata_path = MODELS_DIR / f"{exercise}.metadata.json"
-    if model_path.exists():
-        classifier = CorrectnessClassifier()
-        classifier.load(model_path)
-        if metadata_path.exists():
-            correct_feature_ranges = json.loads(metadata_path.read_text()).get("correct_feature_ranges")
-    else:
-        st.warning(f"No trained model at {model_path} — showing pose and angle only, no correctness label.")
+    try:
+        classifier, correct_feature_ranges = load_classifier_for_live_use(exercise)
+    except RuntimeError as exc:
+        st.error(str(exc))
+        st.stop()
+    if classifier is None:
+        st.warning(f"No trained model at {MODELS_DIR / f'{exercise}.pkl'} — showing pose and angle only, no correctness label.")
 else:
     try:
         rules_config = rules_module.load_config(exercise)

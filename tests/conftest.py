@@ -51,3 +51,26 @@ def load_app_process_frame():
     }
     exec(source[start:end], namespace)
     return namespace["RepDetector"], namespace["process_frame"]
+
+
+def load_app_classifier_loader():
+    """Same exec()-slice technique, extended through build_smoother()'s
+    end, to also capture load_classifier_for_live_use() -- needed to
+    test the classifier metadata validation without importing app.py
+    directly (see load_app_rep_detector())."""
+    import json
+    import statistics
+    from collections import Counter, deque
+
+    from src.classifier import FEATURE_COLUMNS, CorrectnessClassifier
+
+    source = (Path(__file__).resolve().parent.parent / "app.py").read_text()
+    start = source.index("CALIBRATION_FRAMES = 15")
+    end = source.index("\ndef run_headless(video_path")
+    namespace = {
+        "json": json, "statistics": statistics, "Counter": Counter, "deque": deque,
+        "Path": Path, "FEATURE_COLUMNS": FEATURE_COLUMNS, "CorrectnessClassifier": CorrectnessClassifier,
+        "MODELS_DIR": Path("models"), "LIVE_FEATURE_SOURCE": "fk_positions",
+    }
+    exec(source[start:end], namespace)
+    return namespace["load_classifier_for_live_use"]
