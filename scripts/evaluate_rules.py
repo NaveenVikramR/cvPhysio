@@ -23,6 +23,7 @@ results/rules_eval.csv (one row per scored rep).
 """
 
 import csv
+import math
 import statistics
 import sys
 import time
@@ -36,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src import rules as rules_module
 from src.feature_extraction import check_confidence, compute_elbow_angle, compute_trunk_lean_deg, extract_features, select_side
 from src.pose_estimation import get_pose_landmarks
+from src.statuses import DiscardReason, RuleStatus
 
 MANIFEST_PATH = Path("data/clips_manifest.csv")
 RESULTS_DIR = Path("results")
@@ -57,10 +59,10 @@ def load_rep_detector_and_process_frame():
     start = source.index("CALIBRATION_FRAMES = 15")
     end = source.index("\ndef build_smoother")
     namespace = {
-        "statistics": statistics, "Counter": Counter, "deque": deque,
+        "math": math, "statistics": statistics, "Counter": Counter, "deque": deque,
         "check_confidence": check_confidence, "extract_features": extract_features,
         "select_side": select_side, "compute_elbow_angle": compute_elbow_angle,
-        "compute_trunk_lean_deg": compute_trunk_lean_deg,
+        "compute_trunk_lean_deg": compute_trunk_lean_deg, "DiscardReason": DiscardReason,
     }
     exec(source[start:end], namespace)
     return namespace["RepDetector"], namespace["process_frame"]
@@ -223,12 +225,15 @@ def main() -> None:
 
     # insufficient_data rate (eval set), reported separately, never folded
     # into the confusion matrix / detection rates / false-fail rate below
-    insufficient_eval_rows = [r for r in eval_rep_rows if r[2] == "insufficient_data"]
-    scorable_eval_rows = [r for r in eval_rep_rows if r[2] != "insufficient_data"]
+    insufficient_eval_rows = [r for r in eval_rep_rows if r[2] == RuleStatus.INSUFFICIENT_DATA.value]
+    scorable_eval_rows = [r for r in eval_rep_rows if r[2] != RuleStatus.INSUFFICIENT_DATA.value]
 
     # confusion matrix on eval set (ground truth correct/fault vs predicted pass/fail)
     # -- insufficient_data reps excluded, per PART A's requirement.
-    confusion = {"correct": {"pass": 0, "fail": 0}, "fault": {"pass": 0, "fail": 0}}
+    confusion = {
+        "correct": {RuleStatus.PASS.value: 0, RuleStatus.FAIL.value: 0},
+        "fault": {RuleStatus.PASS.value: 0, RuleStatus.FAIL.value: 0},
+    }
     for intended, _failed_rules, status in scorable_eval_rows:
         gt = "correct" if intended == "correct" else "fault"
         confusion[gt][status] += 1
@@ -241,10 +246,10 @@ def main() -> None:
             detection_rates[fault_type] = (hit, len(matching))
 
     correct_eval_reps = [(fr, status) for intended, fr, status in scorable_eval_rows if intended == "correct"]
-    false_fail_count = sum(1 for _fr, status in correct_eval_reps if status == "fail")
+    false_fail_count = sum(1 for _fr, status in correct_eval_reps if status == RuleStatus.FAIL.value)
     wrong_rule_counts = Counter()
     for fr, status in correct_eval_reps:
-        if status == "fail":
+        if status == RuleStatus.FAIL.value:
             wrong_rule_counts.update(fr)
 
     fps_measured = None
@@ -292,8 +297,8 @@ def main() -> None:
     if scorable_eval_rows:
         lines.append("| intended \\ predicted | pass | fail |")
         lines.append("|---|---|---|")
-        lines.append(f"| correct | {confusion['correct']['pass']} | {confusion['correct']['fail']} |")
-        lines.append(f"| fault (any) | {confusion['fault']['pass']} | {confusion['fault']['fail']} |")
+        lines.append(f"| correct | {confusion['correct'][RuleStatus.PASS.value]} | {confusion['correct'][RuleStatus.FAIL.value]} |")
+        lines.append(f"| fault (any) | {confusion['fault'][RuleStatus.PASS.value]} | {confusion['fault'][RuleStatus.FAIL.value]} |")
         lines.append("")
     else:
         lines.append("N/A -- no usable eval-set pass/fail reps.\n")

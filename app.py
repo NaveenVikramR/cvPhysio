@@ -35,6 +35,7 @@ from src.feature_extraction import (
 )
 from src.feedback import LANDMARK_LABELS, SpeechFeedback, draw_overlay, message_for_result, message_for_rules_result
 from src.pose_estimation import get_pose_landmarks, open_webcam
+from src.statuses import DiscardReason, RuleStatus
 from src.tracking import DiscardRecord, RepRecord, SessionTracker
 
 MODELS_DIR = Path("models")
@@ -162,7 +163,7 @@ class RepDetector:
                         self._reset_to_resting()
                         return "rep_complete", {"angle_deg": buffer, "side": votes}
                 self._reset_to_resting()
-                return "rep_discarded", {"reason_code": "lost_tracking", "message": "Rep lost -- tracking interrupted."}
+                return "rep_discarded", {"reason_code": DiscardReason.LOST_TRACKING.value, "message": "Rep lost -- tracking interrupted."}
             return "none", None
 
         self.bad_confidence_streak = 0
@@ -171,7 +172,7 @@ class RepDetector:
 
         if len(self.rep_buffer) > MAX_REP_FRAMES:
             self._reset_to_resting()
-            return "rep_discarded", {"reason_code": "too_long", "message": "Movement took too long -- discarded."}
+            return "rep_discarded", {"reason_code": DiscardReason.TOO_LONG.value, "message": "Movement took too long -- discarded."}
 
         if abs(angle_deg - self.baseline) > REST_BAND_DEG:
             return "none", None
@@ -180,7 +181,7 @@ class RepDetector:
         rep_range = max(self.rep_buffer) - min(self.rep_buffer)
         if len(self.rep_buffer) < MIN_REP_FRAMES or rep_range < MIN_REP_RANGE_DEG:
             self._reset_to_resting()
-            return "rep_discarded", {"reason_code": "too_short", "message": "Movement too brief/small -- discarded."}
+            return "rep_discarded", {"reason_code": DiscardReason.TOO_SHORT.value, "message": "Movement too brief/small -- discarded."}
 
         buffer, votes = self.rep_buffer, self.side_votes
         self.rest_window.append(angle_deg)
@@ -426,10 +427,10 @@ def run_headless(video_path: str, exercise: str, scorer: str) -> None:
                     print(f"    {rule_id}: measured={r['measured']:.1f}  "
                           f"allowed=[{r['allowed'][0]:.1f}, {r['allowed'][1]:.1f}]  passed={r['passed']}")
                 print(f"    message: {message_for_rules_result(result)}")
-                cues = cue_cooldown.cues_to_speak(result["failed_rules"], config["cues"], now=t) if result["status"] == "fail" else []
-                if result["status"] == "insufficient_data" and result["cue"] and cue_cooldown.should_fire("insufficient_data", now=t):
+                cues = cue_cooldown.cues_to_speak(result["failed_rules"], config["cues"], now=t) if result["status"] == RuleStatus.FAIL.value else []
+                if result["status"] == RuleStatus.INSUFFICIENT_DATA.value and result["cue"] and cue_cooldown.should_fire(RuleStatus.INSUFFICIENT_DATA.value, now=t):
                     cues = [result["cue"]]
-                    cue_cooldown.record("insufficient_data", now=t)
+                    cue_cooldown.record(RuleStatus.INSUFFICIENT_DATA.value, now=t)
                 if cues:
                     print(f"    cues: {cues}")
             else:
@@ -538,11 +539,13 @@ if st.session_state.running:
                         confidence=None,
                     ))
                     last_message = f"Rep {rep_count}: {message_for_rules_result(result)}"
-                    last_is_correct = {"pass": True, "fail": False, "insufficient_data": None}[result["status"]]
-                    cues = cue_cooldown.cues_to_speak(result["failed_rules"], rules_config["cues"]) if result["status"] == "fail" else []
-                    if result["status"] == "insufficient_data" and result["cue"] and cue_cooldown.should_fire("insufficient_data"):
+                    last_is_correct = {
+                        RuleStatus.PASS.value: True, RuleStatus.FAIL.value: False, RuleStatus.INSUFFICIENT_DATA.value: None,
+                    }[result["status"]]
+                    cues = cue_cooldown.cues_to_speak(result["failed_rules"], rules_config["cues"]) if result["status"] == RuleStatus.FAIL.value else []
+                    if result["status"] == RuleStatus.INSUFFICIENT_DATA.value and result["cue"] and cue_cooldown.should_fire(RuleStatus.INSUFFICIENT_DATA.value):
                         cues = [result["cue"]]
-                        cue_cooldown.record("insufficient_data")
+                        cue_cooldown.record(RuleStatus.INSUFFICIENT_DATA.value)
                     for cue in cues:
                         speech.speak(cue)
                     if not cues:
@@ -557,7 +560,7 @@ if st.session_state.running:
                             exercise=exercise,
                             side=side_value,
                             angle_deg=agg["angle_max_deg"],
-                            status="pass" if result["is_correct"] else "fail",
+                            status=(RuleStatus.PASS if result["is_correct"] else RuleStatus.FAIL).value,
                             confidence=result["confidence"],
                         ))
                         last_message = f"Rep {rep_count}: {message_for_result(result, None)}"

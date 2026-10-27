@@ -15,10 +15,15 @@ def load_app_rep_detector():
     import statistics
     from collections import Counter, deque
 
+    from src.statuses import DiscardReason
+
     source = (Path(__file__).resolve().parent.parent / "app.py").read_text()
     start = source.index("CALIBRATION_FRAMES = 15")
     end = source.index("\ndef process_frame(detector")
-    namespace = {"statistics": statistics, "Counter": Counter, "deque": deque}
+    namespace = {
+        "statistics": statistics, "Counter": Counter, "deque": deque,
+        "DiscardReason": DiscardReason,
+    }
     exec(source[start:end], namespace)
     return namespace["RepDetector"]
 
@@ -39,6 +44,7 @@ def load_app_process_frame():
         extract_features,
         select_side,
     )
+    from src.statuses import DiscardReason
 
     source = (Path(__file__).resolve().parent.parent / "app.py").read_text()
     start = source.index("CALIBRATION_FRAMES = 15")
@@ -47,7 +53,7 @@ def load_app_process_frame():
         "math": math, "statistics": statistics, "Counter": Counter, "deque": deque,
         "check_confidence": check_confidence, "extract_features": extract_features,
         "select_side": select_side, "compute_elbow_angle": compute_elbow_angle,
-        "compute_trunk_lean_deg": compute_trunk_lean_deg,
+        "compute_trunk_lean_deg": compute_trunk_lean_deg, "DiscardReason": DiscardReason,
     }
     exec(source[start:end], namespace)
     return namespace["RepDetector"], namespace["process_frame"]
@@ -63,6 +69,7 @@ def load_app_classifier_loader():
     from collections import Counter, deque
 
     from src.classifier import FEATURE_COLUMNS, CorrectnessClassifier
+    from src.statuses import DiscardReason
 
     source = (Path(__file__).resolve().parent.parent / "app.py").read_text()
     start = source.index("CALIBRATION_FRAMES = 15")
@@ -70,7 +77,7 @@ def load_app_classifier_loader():
     namespace = {
         "json": json, "statistics": statistics, "Counter": Counter, "deque": deque,
         "Path": Path, "FEATURE_COLUMNS": FEATURE_COLUMNS, "CorrectnessClassifier": CorrectnessClassifier,
-        "MODELS_DIR": Path("models"), "LIVE_FEATURE_SOURCE": "fk_positions",
+        "MODELS_DIR": Path("models"), "LIVE_FEATURE_SOURCE": "fk_positions", "DiscardReason": DiscardReason,
     }
     exec(source[start:end], namespace)
     return namespace["load_classifier_for_live_use"]

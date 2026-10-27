@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 
+from src.statuses import RuleStatus
+
 LOGS_DIR = Path("logs")
 
 
@@ -16,7 +18,7 @@ class RepRecord:
     exercise: str
     side: str
     angle_deg: float
-    status: str  # "pass" | "fail" | "insufficient_data" (classifier scorer only ever produces pass/fail)
+    status: str  # one of RuleStatus's values (classifier scorer only ever produces PASS/FAIL)
     confidence: float | None
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -24,8 +26,7 @@ class RepRecord:
 @dataclass
 class DiscardRecord:
     """A repetition the segmenter started buffering but never completed.
-    reason_code is one of "too_short", "too_long", "lost_tracking" (see
-    app.py's RepDetector)."""
+    reason_code is one of DiscardReason's values (see app.py's RepDetector)."""
     exercise: str
     reason_code: str
     message: str
@@ -48,9 +49,9 @@ class SessionTracker:
 
     def summary(self) -> dict:
         total = len(self.reps)
-        passed = sum(1 for r in self.reps if r.status == "pass")
-        failed = sum(1 for r in self.reps if r.status == "fail")
-        insufficient = sum(1 for r in self.reps if r.status == "insufficient_data")
+        passed = sum(1 for r in self.reps if r.status == RuleStatus.PASS)
+        failed = sum(1 for r in self.reps if r.status == RuleStatus.FAIL)
+        insufficient = sum(1 for r in self.reps if r.status == RuleStatus.INSUFFICIENT_DATA)
         scored = passed + failed
         return {
             "user_id": self.user_id,

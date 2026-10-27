@@ -45,19 +45,21 @@ def load_rep_detector_and_process_frame():
     its source text -- same technique as the other scripts/*.py scripts
     in this project, needed because app.py now parses CLI args and
     launches Streamlit/headless logic at import time."""
+    import math
     import statistics
     from collections import Counter, deque
 
     from src.feature_extraction import check_confidence, compute_elbow_angle, compute_trunk_lean_deg, extract_features, select_side
+    from src.statuses import DiscardReason
 
     source = Path("app.py").read_text()
     start = source.index("CALIBRATION_FRAMES = 15")
     end = source.index("\ndef build_smoother")
     namespace = {
-        "statistics": statistics, "Counter": Counter, "deque": deque,
+        "math": math, "statistics": statistics, "Counter": Counter, "deque": deque,
         "check_confidence": check_confidence, "extract_features": extract_features,
         "select_side": select_side, "compute_elbow_angle": compute_elbow_angle,
-        "compute_trunk_lean_deg": compute_trunk_lean_deg,
+        "compute_trunk_lean_deg": compute_trunk_lean_deg, "DiscardReason": DiscardReason,
     }
     exec(source[start:end], namespace)
     return namespace["RepDetector"], namespace["process_frame"]

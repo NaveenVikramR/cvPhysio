@@ -11,6 +11,8 @@ import json
 import time
 from pathlib import Path
 
+from src.statuses import RuleStatus
+
 CONFIG_DIR = Path("config/exercises")
 
 RULE_IDS = ["peak_angle", "elbow_straight", "trunk_lean", "tempo"]
@@ -120,11 +122,12 @@ def score_rep(rep: dict, config: dict, fps: float) -> dict:
 
     if valid_fraction < min_valid_fraction:
         return {
-            "status": "insufficient_data", "failed_rules": failed_rules, "rules": rules,
+            "status": RuleStatus.INSUFFICIENT_DATA.value, "failed_rules": failed_rules, "rules": rules,
             "valid_fraction": valid_fraction, "cue": config["cues"].get("insufficient_data"),
         }
     return {
-        "status": "pass" if not failed_rules else "fail", "failed_rules": failed_rules, "rules": rules,
+        "status": (RuleStatus.PASS if not failed_rules else RuleStatus.FAIL).value,
+        "failed_rules": failed_rules, "rules": rules,
         "valid_fraction": valid_fraction, "cue": None,
     }
 
