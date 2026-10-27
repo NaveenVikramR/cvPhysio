@@ -1,0 +1,23 @@
+%% Live per-frame data flow.
+%% Derived from: src/pose_estimation.py (get_pose_landmarks/get_pose_landmarks_pair,
+%% load_config), src/feature_extraction.py (check_confidence, extract_features,
+%% compute_elbow_angle, compute_trunk_lean_deg), src/pipeline.py (Session.process_frame,
+%% process_frame, RepDetector.update), src/rules.py (score_rep), src/feedback.py
+%% (message_for_rules_result, draw_overlay, SpeechFeedback.speak), src/tracking.py
+%% (SessionTracker.add_rep/add_discard).
+flowchart TD
+    A["frame\n(BGR image, cv2.VideoCapture)"]
+    A -->|"BGR frame"| B["pose_estimation.get_pose_landmarks(frame)"]
+    B -->|"33x(x,y,z,visibility) tuples\nor None"| C["landmark space: world\n(config/pose.json landmark_space,\nMediaPipe pose_world_landmarks, metric)"]
+    C -->|"33x(x,y,z,visibility),\nmetric, or None"| D["Session.process_frame()\n(gate: IDLE/STOPPED -> discard here)"]
+    D -->|"landmarks (only while\nCALIBRATING/ACTIVE)"| E["feature_extraction.check_confidence()"]
+    E -->|"(visible: bool,\nfailed: list[int])"| F["feature_extraction.extract_features()\ncompute_elbow_angle()\ncompute_trunk_lean_deg()"]
+    F -->|"angle_deg (deg) | None,\nelbow_angle_deg (deg),\ntrunk_lean_deg (deg),\nside (str) | None"| G["pipeline.RepDetector.update()"]
+    G -->|"event: none | rep_complete | rep_discarded"| H{"event?"}
+    H -->|"rep_complete:\nangle_deg[], elbow_angle_deg[],\ntrunk_lean_deg[], valid_fraction"| I["rules.score_rep(rep, config, fps, reference)"]
+    I -->|"{status, failed_rules, rules,\nvalid_fraction, cue, warning}"| J["feedback: message_for_rules_result()\ndraw_overlay() / SpeechFeedback.speak()"]
+    I -->|"{status, ...}"| K["tracking.SessionTracker.add_rep(RepRecord)"]
+    H -->|"rep_discarded:\n{reason_code, message}"| L["tracking.SessionTracker.add_discard(DiscardRecord)"]
+    L --> J
+    K --> M["SessionTracker.save()\n-> {user}_{exercise}_{stamp}.csv\n+ .discards.csv + .summary.json"]
+    H -->|"none"| N["no scoring, no log entry this frame"]

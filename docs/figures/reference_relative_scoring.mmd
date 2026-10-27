@@ -1,0 +1,23 @@
+%% Reference-relative scoring: how a reference is recorded, and how a
+%% rep is compared to it.
+%% Derived from: src/rules.py (rep_summary_features, build_reference,
+%% save_reference, load_reference, score_rep, _reference_relative_bounds).
+flowchart TD
+    subgraph RECORD["Recording a reference"]
+        R1["K reps (default K=3)\neach rep: {angle_deg[], elbow_angle_deg[],\ntrunk_lean_deg[]}"]
+        R1 -->|"rep_summary_features(rep, fps)\nper rep"| R2["peak_angle, elbow_min,\ntrunk_max, tempo_s\n(one set of 4 numbers per rep)"]
+        R2 -->|"build_reference(name, exercise,\nreps, fps): median over K reps"| R3["Reference\n{name, exercise, k_reps, created,\nmedians: {peak_angle, elbow_min,\ntrunk_max, tempo_s}}"]
+        R3 -->|"save_reference()"| R4["data/references/<name>.json\n(gitignored)"]
+    end
+
+    subgraph COMPARE["Scoring one rep against a Reference"]
+        C1["new rep: {angle_deg[], elbow_angle_deg[],\ntrunk_lean_deg[], valid_fraction}"]
+        C4["load_reference(path)"] -->|"Reference.medians"| C2
+        C1 -->|"score_rep(rep, config, fps,\nreference=Reference)"| C2{"config.mode ==\nreference_relative\nAND reference given?"}
+        C2 -->|"yes"| C3["_reference_relative_bounds():\npeak/elbow: >= ref_median - tol (no upper bound)\ntrunk: <= ref_median + tol (no lower bound)\ntempo: within +/- tol_tempo_frac of ref_median"]
+        C2 -->|"no (no reference,\nor mode==absolute)"| C5["_absolute_bounds():\nfixed target_peak_deg +/- tolerance_deg, etc.\n+ warning: 'falling back to absolute thresholds'"]
+        C3 --> C6["per-rule pass/fail,\nsame 3 statuses as absolute mode:\npass / fail / insufficient_data"]
+        C5 --> C6
+    end
+
+    R4 -.->|"loaded at session start\n(app.py: per-patient reference selectbox,\nor --reference PATH headless)"| C4

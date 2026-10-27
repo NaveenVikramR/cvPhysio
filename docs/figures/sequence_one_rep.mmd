@@ -1,0 +1,51 @@
+%% Sequence diagram of one repetition, including the insufficient_data path.
+%% Derived from: src/pipeline.py (Session, RepDetector.update, process_frame),
+%% src/feature_extraction.py (check_confidence), src/rules.py (score_rep),
+%% src/tracking.py (SessionTracker), src/feedback.py (message_for_rules_result,
+%% SpeechFeedback.speak, draw_overlay).
+sequenceDiagram
+    participant Cam as Video/webcam frame source
+    participant Sess as pipeline.Session
+    participant Pose as pose_estimation
+    participant Feat as feature_extraction
+    participant Det as RepDetector
+    participant Rules as rules.score_rep
+    participant Track as SessionTracker
+    participant FB as feedback
+
+    Note over Sess: IDLE until Session.start(), STOPPED after Session.stop()
+    Note over Sess: frames are discarded in either state
+
+    loop one frame at a time, RESTING -> MOVING -> RESTING
+        Cam->>Pose: frame (unconditionally, every frame)
+        Pose->>Sess: landmarks (world) or None
+        Sess->>Feat: landmarks (only while CALIBRATING/ACTIVE)
+        Feat->>Feat: check_confidence(required_roles)
+        alt confidence gate passes
+            Feat->>Det: visible=True, angle_deg (deg), side
+        else confidence gate fails
+            Feat->>Det: visible=False, angle_deg=None, side=None
+        end
+        Det->>Det: update rep_buffer / bad_confidence_streak
+    end
+
+    Det->>Rules: rep_complete: angle_deg[], elbow_angle_deg[], trunk_lean_deg[], valid_fraction
+
+    alt valid_fraction >= config.min_valid_fraction
+        Rules->>Rules: evaluate peak_angle, elbow_straight, trunk_lean, tempo
+        alt all rules pass
+            Rules-->>Track: status=pass
+            Rules-->>FB: message_for_rules_result = Good form!
+        else at least one rule fails
+            Rules-->>Track: status=fail, failed_rules=[...]
+            Rules-->>FB: Needs adjustment plus per-rule cue (cooldown-gated)
+        end
+    else valid_fraction < config.min_valid_fraction
+        Note over Rules: rules are still evaluated, for calibration-set reporting
+        Note over Rules: but the verdict is overridden
+        Rules-->>Track: status=insufficient_data
+        Rules-->>FB: config.cues.insufficient_data (Keep your whole arm in view.)
+    end
+
+    Track->>Track: RepRecord added
+    Track->>Track: SessionTracker.save() on Stop, always, even 0 reps

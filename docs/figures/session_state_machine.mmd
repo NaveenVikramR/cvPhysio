@@ -1,0 +1,24 @@
+%% Session (Start/Stop lifecycle) state machine, with RepDetector's own
+%% nested state machine shown inside ACTIVE.
+%% Derived from: src/pipeline.py (SessionState, Session.start/stop/
+%% session_state, RepDetector.update/__init__ -- CALIBRATION_FRAMES,
+%% REST_BAND_DEG, MIN_REP_FRAMES, MIN_REP_RANGE_DEG, MAX_REP_FRAMES,
+%% CONFIDENCE_TOLERANCE_FRAMES constants).
+stateDiagram-v2
+    [*] --> IDLE
+
+    IDLE --> CALIBRATING: Session.start()\n(constructs a fresh RepDetector)
+    IDLE --> STOPPED: Session.stop()
+
+    CALIBRATING --> ACTIVE: RepDetector.state\nCALIBRATING -> RESTING\n(baseline established over\nCALIBRATION_FRAMES=15 frames)
+    CALIBRATING --> STOPPED: Session.stop()
+
+    state ACTIVE {
+        [*] --> RESTING
+        RESTING --> MOVING: abs(angle_deg - baseline)\n> REST_BAND_DEG
+        MOVING --> RESTING: rep_complete\n(>= MIN_REP_FRAMES and\n>= MIN_REP_RANGE_DEG)
+        MOVING --> RESTING: rep_discarded\n(too_short / too_long /\nlost_tracking)
+    }
+    ACTIVE --> STOPPED: Session.stop()
+
+    STOPPED --> STOPPED: Session.start() is a no-op\n(no restart after Stop)

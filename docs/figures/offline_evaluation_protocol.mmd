@@ -1,0 +1,47 @@
+%% Offline evaluation protocol: REHAB24-6 subject split, what is derived
+%% from which, runs 1/2, the oracle run, and the separate own-clip path.
+%% Derived from: data/rehab24_subject_split.json (calibration_subjects=
+%% [1,2,6], evaluation_subjects=[3,4,5,7,8,9]), scripts/
+%% build_benchmark_config.py, scripts/derive_reference_tolerances.py,
+%% scripts/benchmark_rehab24.py (run 1), scripts/
+%% evaluate_reference_scoring.py (run 2), scripts/
+%% evaluate_oracle_ceiling.py (oracle), scripts/build_review3_summary.py,
+%% scripts/evaluate_own_clips.py.
+flowchart TD
+    SPLIT["data/rehab24_subject_split.json\ncalibration_subjects=[1,2,6]\nevaluation_subjects=[3,4,5,7,8,9]"]
+
+    SPLIT --> CALIB["Calibration subjects\n(front view, correct reps)"]
+    SPLIT --> EVAL["Evaluation subjects\n(front view, all labels)"]
+
+    CALIB -->|"MediaPipe world-landmark features"| ABS_DERIVE["build_benchmark_config.py\n[p5,p95] per feature"]
+    ABS_DERIVE --> ABS_CFG["config/exercises/benchmarks/\nrehab24_abduction.json\n(mode=absolute)"]
+
+    CALIB -->|"MediaPipe world-landmark features"| REF_DERIVE["derive_reference_tolerances.py\nreference=first 3 correct reps;\ntolerance=p95 one-sided deviation"]
+    REF_DERIVE --> REF_CFG["config/exercises/benchmarks/\nrehab24_abduction_reference.json\n(mode=reference_relative)"]
+
+    DEMO_CFG["config/exercises/\nshoulder_abduction.json\n(mode=absolute, shipped default)"]
+
+    ABS_CFG --> RUN1["RUN 1: benchmark_rehab24.py\nscore evaluation subjects\n(benchmark config AND demo config)"]
+    DEMO_CFG --> RUN1
+
+    REF_CFG --> RUN2["RUN 2: evaluate_reference_scoring.py\nper-subject reference = that\nsubject's own first 3 correct reps;\nscore remaining reps"]
+
+    CALIB -->|"mocap 3D-joint features\n(ground truth)"| ORACLE_DERIVE["evaluate_oracle_ceiling.py\n(derives its OWN absolute +\nreference_relative configs,\nmocap features)"]
+    ORACLE_DERIVE --> ORACLE["ORACLE RUN\nscore evaluation subjects\nwith mocap features\n(upper bound, not deployable)"]
+    EVAL --> ORACLE
+
+    RUN1 --> SUMMARY["build_review3_summary.py\nresults/review3_summary.md"]
+    RUN2 --> SUMMARY
+    ORACLE --> SUMMARY
+
+    subgraph OWNCLIPS["Separate path: own recorded clips (not REHAB24)"]
+        OWN_REF["role=reference clip\n(3 correct reps, live\nSession/RepDetector detection)"]
+        OWN_CALIB["role=calibration clip(s)\n(8 correct reps)"]
+        OWN_EVAL["role=eval clips\n(10 correct + 5 per fault type)"]
+        OWN_REF -->|"build_reference()"| OWN_REF_OBJ["Reference\n(median peak/elbow/trunk/tempo)"]
+        OWN_CALIB -->|"same one-sided-deviation\nmethod as derive_reference_\ntolerances.py"| OWN_TOL["derived tol_* config\n(in-memory, this run only)"]
+        OWN_REF_OBJ --> OWN_TOL
+        OWN_EVAL -->|"evaluate_own_clips.py"| OWN_RESULT["results/own_clips_eval.md/.csv"]
+        OWN_TOL --> OWN_RESULT
+        DEMO_CFG --> OWN_RESULT
+    end
