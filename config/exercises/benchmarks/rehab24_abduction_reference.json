@@ -1,0 +1,96 @@
+{
+  "exercise": "shoulder_abduction",
+  "mode": "reference_relative",
+  "notice": "Derived automatically from REHAB24-6 CALIBRATION subjects, front view only (see derived_from/subjects below) -- NOT the live shipped config. A licensed physiotherapist must still review before use. n=9 deviation reps -- BELOW the 30-rep caution threshold.",
+  "derived_from": "REHAB24-6 calibration subjects (front view only)",
+  "landmark_space": "world",
+  "n_reference_reps": 6,
+  "n_deviation_reps": 9,
+  "subjects": [
+    1,
+    2
+  ],
+  "date": "2026-10-27",
+  "commit": "4c15cefd009d4fa1596919845b90dcaba9138ab8",
+  "per_subject_reference_medians": {
+    "1": {
+      "peak_angle": 159.89683634592893,
+      "elbow_min": 142.19351626450867,
+      "trunk_max": 17.01386633391471,
+      "tempo_s": 8.1
+    },
+    "2": {
+      "peak_angle": 115.25786091404225,
+      "elbow_min": 143.4994608246982,
+      "trunk_max": 16.99088503295866,
+      "tempo_s": 6.333333333333333
+    }
+  },
+  "tol_peak_deg": {
+    "value": 33.7,
+    "status": "derived",
+    "comment": "p95 of max(0, ref_median - measured), pooled over calibration subjects' remaining correct reps"
+  },
+  "tol_elbow_deg": {
+    "value": 0.4,
+    "status": "derived",
+    "comment": "p95 of max(0, ref_median - measured)"
+  },
+  "tol_trunk_deg": {
+    "value": 3.9,
+    "status": "derived",
+    "comment": "p95 of max(0, measured - ref_median)"
+  },
+  "tol_tempo_frac": {
+    "value": 0.281,
+    "status": "derived",
+    "comment": "p95 of |measured - ref_median| / ref_median"
+  },
+  "target_peak_deg": {
+    "value": 138.8,
+    "status": "derived",
+    "comment": "(p5+p95)/2 of peak_angle across calibration-subject correct front-view reps"
+  },
+  "tolerance_deg": {
+    "value": 23.7,
+    "status": "derived",
+    "comment": "(p95-p5)/2 of peak_angle, so [target-tolerance,target+tolerance]==[p5,p95]"
+  },
+  "min_elbow_straight_deg": {
+    "value": 141.2,
+    "status": "derived",
+    "comment": "p5 of elbow_min (lower bound only)"
+  },
+  "max_trunk_lean_deg": {
+    "value": 20.5,
+    "status": "derived",
+    "comment": "p95 of trunk_max (upper bound only)"
+  },
+  "tempo_min_s": {
+    "value": 5.37,
+    "status": "derived",
+    "comment": "p5 of tempo_s"
+  },
+  "tempo_max_s": {
+    "value": 8.12,
+    "status": "derived",
+    "comment": "p95 of tempo_s"
+  },
+  "cue_cooldown_s": {
+    "value": 8,
+    "status": "carried_over",
+    "comment": "not data-derived -- same operational default as config/exercises/shoulder_abduction.json"
+  },
+  "min_valid_fraction": {
+    "value": 0.7,
+    "status": "carried_over",
+    "comment": "not data-derived -- same operational default as config/exercises/shoulder_abduction.json"
+  },
+  "cues": {
+    "peak_angle": "Raise your arm closer to the target height.",
+    "elbow_straight": "Keep your elbow straighter as you raise your arm.",
+    "trunk_lean": "Keep your torso upright -- try not to lean.",
+    "tempo": "Move at a steadier, more controlled pace.",
+    "insufficient_data": "Keep your whole arm in view."
+  }
+}
