@@ -27,6 +27,7 @@ SCRIPT_MODULES = [
     "scripts.diagnose_coord_space",
     "scripts.diagnose_coords_C",
     "scripts.build_benchmark_config",
+    "scripts.per_subject_fidelity",
     "scripts.evaluate_rules",
     "scripts.measure_smoothing_effect",
     "scripts.rotation_proxy_experiment",
