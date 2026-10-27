@@ -13,14 +13,24 @@ nothing else." Uses MediaPipe's Tasks API (`PoseLandmarker`), `RunningMode.VIDEO
 `min_pose_detection_confidence=0.5`, `min_tracking_confidence=0.5`. Model
 file: `models/pose_landmarker_lite.task` (hardcoded path, not a config key).
 
+MediaPipe's `PoseLandmarkerResult` carries TWO landmark sets per frame:
+`pose_landmarks` (normalized image-space, x/y independently divided by
+frame width/height) and `pose_world_landmarks` (metric meters,
+hip-centered, independent of frame width/height). `get_pose_landmarks()`
+returns whichever one `config/pose.json`'s `landmark_space` key selects
+(see `docs/config_schema.md`) — this is the single place that selection
+happens; every caller downstream is unaware of which space is active.
+
 | Function | Signature | Input | Output | Units | Failure behaviour |
 |---|---|---|---|---|---|
-| `get_pose_landmarks` | `(frame) -> list[tuple[float,float,float,float]] \| None` | one BGR frame (as from `cv2.VideoCapture.read()`) | 33 `(x, y, z, visibility)` tuples, MediaPipe `PoseLandmark` index order | x/y normalized image coords `[0,1]`; z relative depth (same scale as x roughly, MediaPipe convention); visibility `[0,1]` | Returns `None` if MediaPipe detects no pose in the frame. Never raises for a normal frame. |
+| `load_config` | `() -> dict` | — | parsed JSON from `config/pose.json` | — | Raises if the file is missing (plain `Path.read_text()`, no existence check). |
+| `get_pose_landmarks_pair` | `(frame) -> (list[tuple]\|None, list[tuple]\|None)` | one BGR frame | `(normalized, world)` from ONE `detect_for_video()` call | normalized: x/y `[0,1]`, z roughly on x's scale (MediaPipe convention); world: meters, hip-centered; visibility `[0,1]`, identical between the two sets for the same joint (confirmed empirically, not just assumed) | Either or both sides `None` if MediaPipe detects no pose. Never raises for a normal frame. |
+| `get_pose_landmarks` | `(frame) -> list[tuple[float,float,float,float]] \| None` | one BGR frame | 33 `(x, y, z, visibility)` tuples, MediaPipe `PoseLandmark` index order, in whichever space `load_config()["landmark_space"]` selects (`"world"` default, `"normalized"` to reproduce the pre-landmark_space behavior) | see `get_pose_landmarks_pair` above, depending on the selected space | Raises `ValueError` if `landmark_space` is neither `"world"` nor `"normalized"`. Returns `None` if MediaPipe detects no pose, or if the selected space's set wasn't available for this frame (never silently falls back to the other space). |
 | `open_webcam` | `(camera_index: int = 0) -> cv2.VideoCapture` | camera index | an opened `cv2.VideoCapture` | n/a | Raises `RuntimeError` if the camera can't be opened. |
 
 Module-level mutable state: `_next_timestamp_ms`, incremented by 33 on
-every `get_pose_landmarks()` call (a monotonic tick MediaPipe's VIDEO
-mode requires — not real elapsed time; see `docs/open_questions.md`).
+every `get_pose_landmarks_pair()` call (a monotonic tick MediaPipe's
+VIDEO mode requires — not real elapsed time; see `docs/open_questions.md`).
 
 ## src/feature_extraction.py
 
@@ -47,11 +57,25 @@ pass in `exercise` strings and (optionally) a `required_roles` set.
 | `check_confidence` | `(landmarks, side, exercise, required_roles=None) -> (bool, list[int])` | landmarks, a side role-dict, exercise name, optional override role set | `(ok, failed_landmark_indices)` | — | `roles = required_roles if given else BASE_REQUIRED_ROLES[exercise]`; a role fails if `landmarks[i][3] < MIN_VISIBILITY`. Raises `KeyError` if `exercise` isn't in `BASE_REQUIRED_ROLES` and no `required_roles` given. |
 | `extract_features` | `(landmarks, exercise) -> dict \| None` | landmarks (or `None`), exercise name | `{"exercise", "side", "angle_deg"}` or `None` | degrees | Raises `ValueError` for an unknown exercise. Returns `None` if `landmarks is None` or `check_confidence` (using the **default**, not rules-derived, required roles) fails. Internally calls `check_confidence` a second time with no `required_roles` override — redundant with any outer gate, see open questions. |
 
-## app.py — RepDetector (the "segmenter")
+## src/pipeline.py
 
-Not a separate file — a class defined inside `app.py`, lines ~84-203.
+The shared live-pipeline orchestration module: `RepDetector` (the
+segmenter), `process_frame()`, `build_smoother()`,
+`load_classifier_for_live_use()`, and `Session`/`SessionState` (the
+Start/Stop lifecycle). `app.py` and every `scripts/*.py` diagnostic that
+needs rep detection import these directly from here — previously each
+independently `exec()`-sliced them out of `app.py`'s own source text
+(dropped: every new name that sliced code referenced had to be
+re-added to every loader's namespace by hand, and had already silently
+broken one script before this module existed). No Streamlit, no cv2
+window/webcam code, no work at import time.
+
+### RepDetector (the "segmenter")
+
 Purpose: turn a continuous per-frame angle signal into discrete
 repetitions via a 3-state machine (`CALIBRATING → RESTING ⇄ MOVING`).
+**Unmodified** by the Session lifecycle below — Session only decides
+whether a frame reaches this state machine at all.
 
 | Constant | Value | Meaning |
 |---|---|---|
@@ -71,7 +95,34 @@ repetitions via a 3-state machine (`CALIBRATING → RESTING ⇄ MOVING`).
 | `__init__` | `()` | — | fresh instance, `state="CALIBRATING"` | — |
 | `update` | `(visible: bool, angle_deg: float\|None, side: str\|None, failed: list[int]\|None=None) -> (event, payload)` | one frame's confidence-gated angle/side, plus (while calibrating) the list of failed landmark indices | `("none", None)` / `("rep_complete", {"angle_deg": [...], "side": [...]})` / `("rep_discarded", {"reason_code": "too_short"\|"too_long"\|"lost_tracking", "message": str})` | No exceptions raised for any input combination observed in the code; `angle_deg`/`side` are only read when `visible` is `True`. |
 | `_reset_to_resting` | `() -> None` | — | clears `rep_buffer`/`side_votes`/`bad_confidence_streak`, sets `state="RESTING"` | — |
-| `calibration_hint` | `() -> str \| None` | — | a hint string once stalled `CALIBRATING` past `CALIBRATION_STALL_FRAMES`, else `None` | Only called from the Streamlit path, not `run_headless()` — see open questions. |
+| `calibration_hint` | `() -> str \| None` | — | a hint string once stalled `CALIBRATING` past `CALIBRATION_STALL_FRAMES`, else `None` | Called from both `app.py`'s Streamlit path and `run_headless()`. |
+
+### process_frame, build_smoother, load_classifier_for_live_use
+
+| Function | Signature | Input | Output | Failure behaviour |
+|---|---|---|---|---|
+| `process_frame` | `(detector: RepDetector, parallel: dict, landmarks, exercise: str, smoother=None, t: float\|None=None, required_roles: set[str]\|None=None) -> (event, payload, visible, failed)` | one frame's raw landmarks + shared `RepDetector`/accumulator state | event tuple from `RepDetector.update`, with `elbow_angle_deg`/`trunk_lean_deg`/`valid_fraction` added to the payload on `rep_complete` | `parallel` must be pre-seeded as `{"elbow": [], "trunk": [], "total_frames": 0}`; no internal guard if it isn't. |
+| `build_smoother` | `() -> LandmarkSmoother \| None` | — | `None` if `config/smoothing.json`'s `"enabled"` is false/missing, else a configured `LandmarkSmoother` | Raises whatever `smoothing_module.load_config()` raises if the file is missing. |
+| `load_classifier_for_live_use` | `(exercise: str, models_dir: Path = MODELS_DIR) -> (CorrectnessClassifier\|None, dict\|None)` | exercise name, optional override dir (for tests) | `(None, None)` if no `{exercise}.pkl` exists yet; else `(classifier, correct_feature_ranges)` | Raises `RuntimeError` if the sidecar `{exercise}.metadata.json` is missing, or its `feature_names`/`feature_source` don't match the live path's `FEATURE_COLUMNS`/`LIVE_FEATURE_SOURCE` exactly. |
+
+### SessionState / Session (Start/Stop lifecycle)
+
+Purpose: gate whether a frame reaches `RepDetector` at all, via
+`IDLE → CALIBRATING → ACTIVE → STOPPED`. `CALIBRATING`/`ACTIVE` are
+*derived* from `RepDetector.state` (`CALIBRATING` mirrors
+`detector.state == "CALIBRATING"`; `ACTIVE` covers both `RESTING` and
+`MOVING`) — `Session` adds no segmentation logic of its own. Drives
+both `app.py`'s Streamlit Start/Stop buttons and headless mode's
+`--span START END`.
+
+| Member | Signature | Behaviour |
+|---|---|---|
+| `SessionState.IDLE/CALIBRATING/ACTIVE/STOPPED` | string constants | the 4 state names, as returned by `Session.session_state` |
+| `Session.__init__` | `(exercise: str)` | `session_state == IDLE`; `detector`/`parallel` are `None` until `start()` |
+| `Session.session_state` | property `-> str` | `STOPPED` if `stop()` was ever called; else `IDLE` if `detector is None`; else `CALIBRATING`/`ACTIVE` per `detector.state` |
+| `Session.start` | `() -> None` | `IDLE → CALIBRATING`: constructs a fresh `RepDetector` + `parallel` dict. No-op if already started or stopped (no restart after Stop). |
+| `Session.stop` | `() -> None` | One-way, idempotent transition to `STOPPED`. |
+| `Session.process_frame` | `(landmarks, smoother=None, t: float\|None=None, required_roles: set[str]\|None=None) -> (event, payload, visible, failed)` | While `IDLE`/`STOPPED`: returns `("idle", None, False, [])` without calling `RepDetector`/`process_frame()` at all. Otherwise delegates straight to the module-level `process_frame()`. |
 
 ## src/rules.py
 
@@ -161,22 +212,25 @@ itself) and, only via `app.py`, the sibling `models/{exercise}.metadata.json`.
 | `is_within_correct_range` | `(features: dict, correct_feature_ranges: dict) -> bool` | one rep's features + the ranges above | whether every present feature falls inside its training-correct range | — | Silently skips any column in `correct_feature_ranges` not present in `features` (via `if col in features`). |
 | `cross_subject_split` | `(dataset, test_size=0.2, random_state=42) -> (train_df, test_df)` | — | a `GroupShuffleSplit` by `subject_id` | — | Prints (not raises) a warning if fewer than 5 subjects are present. |
 
-## app.py (the rest of it, beyond `RepDetector`)
+## app.py
 
 Purpose (module docstring): "Streamlit UI: wires pose_estimation →
 feature_extraction → classifier → feedback → tracking into a live
-webcam session." Also runs headless via `--video`. Config keys read: see
-`docs/config_schema.md`.
+webcam session." Also runs headless via `--video`. Imports
+`RepDetector`/`process_frame`/`build_smoother`/
+`load_classifier_for_live_use`/`Session` from `src/pipeline.py` (see
+above) instead of defining them itself. All CLI/Streamlit work runs
+inside `if __name__ == "__main__":` — importing `app` does no work and
+parses no CLI args (`tests/test_script_imports.py` asserts this).
+Config keys read: see `docs/config_schema.md`.
 
 | Function | Signature | Input | Output | Failure behaviour |
 |---|---|---|---|---|
-| `parse_args` | `() -> Namespace` | `sys.argv[1:]` | `--scorer {rules,classifier}` (default `rules`), `--video` (default `None`), `--exercise` (default `shoulder_abduction`, choices from `EXERCISES`) | argparse's own usage-error exit on bad input. |
-| `process_frame` | `(detector, parallel: dict, landmarks, exercise: str, smoother=None, t: float\|None=None, required_roles: set[str]\|None=None) -> (event, payload, visible, failed)` | one frame's raw landmarks + shared `RepDetector`/accumulator state | event tuple from `RepDetector.update`, with `elbow_angle_deg`/`trunk_lean_deg`/`valid_fraction` added to the payload on `rep_complete` | `parallel` must be pre-seeded as `{"elbow": [], "trunk": [], "total_frames": 0}`; no internal guard if it isn't. |
-| `build_smoother` | `() -> LandmarkSmoother \| None` | — | `None` if `config/smoothing.json`'s `"enabled"` is false/missing, else a configured `LandmarkSmoother` | Raises whatever `smoothing_module.load_config()` raises if the file is missing. |
-| `run_headless` | `(video_path: str, exercise: str, scorer: str) -> None` | CLI args | prints per-rep results to stdout; no return value | Prints a message and returns early (no exception) if the video can't be opened, the rules config is missing, or no classifier model file exists. |
-| (module-level Streamlit script body) | — | webcam frames via `open_webcam()` | live overlay + spoken cues + `logs/*.csv`/`.discards.csv`/`.summary.json` on stop | `st.stop()` if `--scorer rules` and no config exists for the selected exercise. |
+| `parse_args` | `() -> Namespace` | `sys.argv[1:]` | `--scorer {rules,classifier}` (default `rules`), `--video` (default `None`), `--exercise` (default `shoulder_abduction`, choices from `EXERCISES`), `--span START END` (two ints, default `None`, only meaningful with `--video`) | argparse's own usage-error exit on bad input. |
+| `run_headless` | `(video_path: str, exercise: str, scorer: str, span: tuple[int,int]\|None=None) -> None` | CLI args | prints per-rep results to stdout; no return value | Prints a message and returns early (no exception) if the video can't be opened, the rules config is missing, or no classifier model file exists. Internally drives a `src.pipeline.Session`: with `span=None`, `session.start()` is called before frame 0 and never stopped (every frame reaches the rep detector — the pre-`--span` behavior, confirmed byte-identical on the project's real test clip); with `span=(start,end)`, `start()` fires at `frame_idx==start` and `stop()` right after `frame_idx==end`. |
+| (module-level Streamlit script body) | — | webcam frames via `open_webcam()` | live overlay + spoken cues + `logs/*.csv`/`.discards.csv`/`.summary.json` on stop | `st.stop()` if `--scorer rules` and no config exists for the selected exercise. "Start session"/"Stop session" buttons drive `Session.start()`/`Session.stop()` (the latter in a `finally:` block, since Streamlit's own `st.session_state.running` flag — unchanged — is what actually breaks the per-frame `while` loop). |
 
-Entry point: `if ARGS.video: run_headless(...); raise SystemExit(0)` — so
-`streamlit run app.py` and `python app.py --video ...` are two disjoint
-code paths through the same file; everything below that guard is
-Streamlit-only.
+Entry point: `if __name__ == "__main__": ARGS = parse_args(); if ARGS.video:
+run_headless(...); raise SystemExit(0) ...` — so `streamlit run app.py`
+and `python app.py --video ...` are two disjoint code paths through the
+same file; everything after the `--video` check is Streamlit-only.

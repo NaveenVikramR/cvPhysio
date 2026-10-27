@@ -1,15 +1,32 @@
 # Data flow
 
-Both diagrams are drawn from `app.py`'s actual call order (`process_frame`,
-plus the per-caller code in `run_headless` / the Streamlit body), not from
-an assumed pipeline shape. One deviation from the commonly-assumed order is
-called out explicitly below — see the note under the flowchart.
+Both diagrams are drawn from `src/pipeline.py`'s actual call order
+(`process_frame`, `Session`, plus the per-caller code in `app.py`'s
+`run_headless` / Streamlit body), not from an assumed pipeline shape. One
+deviation from the commonly-assumed order is called out explicitly below
+— see the note under the flowchart.
+
+## Session gating, after pose estimation, before everything else
+
+Every caller still calls `pose_estimation.get_pose_landmarks(frame)`
+unconditionally, every frame, regardless of session state (this did
+NOT change) — it's what happens to that result that's gated. The
+landmarks are then handed to `src.pipeline.Session.process_frame()`
+instead of the bare module-level `process_frame()` directly. While
+`session_state` is `IDLE` (before Start) or `STOPPED` (after Stop),
+`Session.process_frame()` returns `("idle", None, False, [])`
+immediately — the landmarks are discarded right there: never smoothed,
+never confidence-gated, never reaching `RepDetector`, never counted,
+buffered, or logged. Only while `CALIBRATING`/`ACTIVE` does
+`Session.process_frame()` forward to the module-level `process_frame()`
+shown in the flowchart below, unchanged. See `docs/module_interfaces.md`'s
+`src/pipeline.py` section for the 4 states.
 
 ## Live loop, per frame
 
 ```mermaid
 flowchart TD
-    A["frame (BGR image, cv2.VideoCapture)"] -->|BGR frame| B["pose_estimation.get_pose_landmarks()"]
+    A["frame (BGR image, cv2.VideoCapture)"] -->|BGR frame| B["pose_estimation.get_pose_landmarks()\n(selects world/normalized per config/pose.json's landmark_space)"]
     B -->|"33x(x,y,z,visibility) tuples, or None"| C{"smoother given?"}
     C -->|yes| D["smoothing.LandmarkSmoother.update(landmarks, t)"]
     C -->|no| E
@@ -61,6 +78,7 @@ enough frames (ordinary pass/fail path) and one that doesn't (the
 ```mermaid
 sequenceDiagram
     participant Cam as Video/webcam frame source
+    participant Sess as pipeline.Session
     participant Pose as pose_estimation
     participant Smooth as smoothing.LandmarkSmoother
     participant Feat as feature_extraction
@@ -69,9 +87,13 @@ sequenceDiagram
     participant Track as SessionTracker
     participant FB as feedback
 
+    Note over Sess: IDLE until Start() is called (or --span's START frame)\nSTOPPED after Stop() (or --span's END frame) -- landmarks\nare discarded in either state, before Smooth/Feat/Det run
+
     loop one frame at a time, RESTING -> MOVING -> RESTING
-        Cam->>Pose: frame
-        Pose->>Smooth: landmarks or None
+        Cam->>Pose: frame (unconditionally, every frame -- unchanged)
+        Pose->>Sess: landmarks or None
+        Sess->>Sess: session_state == IDLE/STOPPED? discard here and skip to next frame
+        Sess->>Smooth: landmarks (only while CALIBRATING/ACTIVE)
         Smooth->>Feat: landmarks (smoothed / held-over / None)
         Feat->>Feat: check_confidence(required_roles)
         alt confidence gate passes
