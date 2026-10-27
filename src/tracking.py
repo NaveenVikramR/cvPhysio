@@ -4,7 +4,7 @@ angle, correctness, confidence). Output: session log files + summaries.
 
 import csv
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -70,11 +70,15 @@ class SessionTracker:
         stamp = self.started_at.strftime("%Y%m%dT%H%M%SZ")
         path = logs_dir / f"{self.user_id}_{self.exercise}_{stamp}.csv"
         with path.open("w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=list(asdict(self.reps[0]).keys()) if self.reps else [])
-            if self.reps:
-                writer.writeheader()
-                for rep in self.reps:
-                    writer.writerow(asdict(rep))
+            # Field names come from the dataclass itself, not from an
+            # instance -- so a header row is always written, even for a
+            # zero-rep session (previously: fieldnames=[] and no
+            # writeheader() call when self.reps was empty, producing a
+            # silent 0-byte file).
+            writer = csv.DictWriter(f, fieldnames=[fld.name for fld in fields(RepRecord)])
+            writer.writeheader()
+            for rep in self.reps:
+                writer.writerow(asdict(rep))
         if self.discards:
             discards_path = path.with_suffix(".discards.csv")
             with discards_path.open("w", newline="") as f:
