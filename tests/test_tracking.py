@@ -40,3 +40,28 @@ def test_summary_handles_zero_reps_without_error(tmp_path):
     assert summary["total_reps"] == 0
     assert summary["accuracy_pct"] is None
     assert summary["insufficient_data_rate_pct"] is None
+
+
+# --- camera_info (resolution/fps actually received) ----------------------
+
+def test_summary_omits_camera_key_when_no_camera_info_given():
+    tracker = SessionTracker(user_id="demo", exercise="shoulder_abduction")
+    assert "camera" not in tracker.summary()
+
+
+def test_summary_includes_camera_info_when_given():
+    camera_info = {"width": 1280, "height": 720, "fps": 29.97}
+    tracker = SessionTracker(user_id="demo", exercise="shoulder_abduction", camera_info=camera_info)
+    assert tracker.summary()["camera"] == camera_info
+
+
+def test_camera_info_is_written_into_the_summary_json_sidecar(tmp_path):
+    camera_info = {"width": 640, "height": 480, "fps": 30.0}
+    tracker = SessionTracker(user_id="demo", exercise="shoulder_abduction", camera_info=camera_info)
+    path = tracker.save(logs_dir=tmp_path)
+
+    import json
+    summary_path = path.with_suffix(".summary.json")
+    assert summary_path.exists()
+    saved = json.loads(summary_path.read_text())
+    assert saved["camera"] == camera_info

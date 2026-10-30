@@ -254,7 +254,12 @@ if __name__ == "__main__":
                 st.session_state.running = False
                 st.stop()
             fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
-            tracker = SessionTracker(user_id=user_id, exercise=exercise)
+            camera_info = {
+                "width": int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                "height": int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                "fps": round(fps, 2),
+            }
+            tracker = SessionTracker(user_id=user_id, exercise=exercise, camera_info=camera_info)
             session = Session(exercise)
             session.start()  # "Start session" button already gated entry into this block -- begin calibrating now
             smoother = build_smoother()
