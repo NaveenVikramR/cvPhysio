@@ -34,6 +34,10 @@ import cv2
 import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+
+from src.feature_extraction import LEFT, RIGHT, compute_angle
+
 RECORDINGS_DIR = REPO_ROOT / "data" / "recordings"
 MANIFEST_PATH = REPO_ROOT / "data" / "own_manifest.csv"
 
@@ -45,6 +49,8 @@ DEFAULT_CAMERA_INDEX = 0  # open_webcam()'s default, which is what app.py calls
 COUNTDOWN_S = 5
 MIN_VISIBILITY = 0.5  # same threshold as the confidence gate
 FRAME_MARGIN_FRAC = 0.05  # framing box inset, as a fraction of each dimension
+ARMS_UP_DEG = 45.0  # same limit as scripts/qc_clip.py's arms_down check
+ARMS_DOWN_START_S = 1.5  # how far into the recording the arms-up warning stays active
 
 WRISTS = {"left wrist": 15, "right wrist": 16}
 # Everything the rules scorer needs (src.rules.REQUIRED_ROLES_BY_RULE).
@@ -176,6 +182,18 @@ def low_wrist_warnings(landmarks: list | None) -> list[str]:
     ]
 
 
+def arms_up(landmarks: list | None) -> bool:
+    """Either arm at or above ARMS_UP_DEG. The rep detector takes its rest baseline
+    from the clip's first frames, so a raised arm there inverts rep detection.
+    Either arm counts, because the scorer may select either side."""
+    if landmarks is None:
+        return False
+    return any(
+        compute_angle(landmarks[joints["hip"]], landmarks[joints["shoulder"]], landmarks[joints["elbow"]]) >= ARMS_UP_DEG
+        for joints in (LEFT, RIGHT)
+    )
+
+
 def outside_box(landmarks: list | None) -> list[str]:
     """Required landmarks outside the framing box. Checked separately from
     visibility because MediaPipe can report a usable visibility score for a
@@ -189,7 +207,7 @@ def outside_box(landmarks: list | None) -> list[str]:
     ]
 
 
-def draw_preview(frame, landmarks: list | None, status: str, status_colour: tuple) -> np.ndarray:
+def draw_preview(frame, landmarks: list | None, status: str, status_colour: tuple, arms_up_warning: bool = False) -> np.ndarray:
     view = frame.copy()
     height, width = view.shape[:2]
     margin_x, margin_y = int(width * FRAME_MARGIN_FRAC), int(height * FRAME_MARGIN_FRAC)
@@ -209,6 +227,9 @@ def draw_preview(frame, landmarks: list | None, status: str, status_colour: tupl
     if missing:
         y += 24
         cv2.putText(view, "OUT OF BOX: " + ", ".join(missing), (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 1)
+    if arms_up_warning:
+        cv2.rectangle(view, (0, height - 44), (width, height), (0, 0, 255), -1)
+        cv2.putText(view, "ARMS UP - LOWER YOUR ARMS NOW", (10, height - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
     return view
 
 
@@ -221,7 +242,8 @@ class PoseWorker(threading.Thread):
         self._frame = None
         self._wake = threading.Event()
         self._stopping = False
-        self.landmarks = None
+        self.landmarks = None  # image space, for drawing
+        self.angle_landmarks = None  # the configured landmark space, for angles
 
     def submit(self, frame) -> None:
         self._frame = frame
@@ -233,7 +255,7 @@ class PoseWorker(threading.Thread):
             self._wake.clear()
             if self._stopping:
                 return
-            self.landmarks = self._estimate(self._frame)
+            self.landmarks, self.angle_landmarks = self._estimate(self._frame)
 
     def stop(self) -> None:
         self._stopping = True
@@ -249,9 +271,10 @@ WINDOW = "record_clip"
 KEY_ESC = 27
 
 
-def show(frame, worker: PoseWorker, status: str, colour: tuple) -> int:
+def show(frame, worker: PoseWorker, status: str, colour: tuple, check_arms: bool = True) -> int:
     worker.submit(frame)
-    cv2.imshow(WINDOW, draw_preview(frame, worker.landmarks, status, colour))
+    warning = check_arms and arms_up(worker.angle_landmarks)
+    cv2.imshow(WINDOW, draw_preview(frame, worker.landmarks, status, colour, warning))
     return cv2.waitKey(1) & 0xFF
 
 
@@ -292,7 +315,7 @@ def record_frames(capture, worker: PoseWorker, spool_path: Path, seconds: float 
             timestamps.append(now)
             elapsed = now - timestamps[0]
             status = f"REC {elapsed:5.1f}s" + (f" / {seconds:g}s" if seconds else "") + "  q = stop, ESC = discard"
-            key = show(frame, worker, status, (0, 0, 255))
+            key = show(frame, worker, status, (0, 0, 255), check_arms=elapsed < ARMS_DOWN_START_S)
             if key == KEY_ESC:
                 return None
             if key == ord("q"):
@@ -328,10 +351,16 @@ def main(argv: list[str] | None = None) -> int:
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
 
     # Imported here because it loads the pose model at import time.
-    from src.pose_estimation import get_pose_landmarks_pair, open_webcam
+    from src.pose_estimation import get_pose_landmarks_pair, load_config, open_webcam
+
+    landmark_space = load_config().get("landmark_space", "world")
+
+    def estimate(frame):
+        normalized, world = get_pose_landmarks_pair(frame)
+        return normalized, world if landmark_space == "world" else normalized
 
     capture = open_webcam(args.camera)
-    worker = PoseWorker(lambda frame: get_pose_landmarks_pair(frame)[0])
+    worker = PoseWorker(estimate)
     worker.start()
     spool_path = RECORDINGS_DIR / ".record_clip_spool.raw"
     try:
@@ -359,5 +388,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, str(REPO_ROOT))
     sys.exit(main())

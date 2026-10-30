@@ -5,6 +5,8 @@ are never touched."""
 import argparse
 import csv
 import json
+import tempfile
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -12,6 +14,7 @@ import pytest
 
 from scripts import record_clip as rc
 from scripts.evaluate_own_clips import read_manifest
+from src.feature_extraction import LEFT, RIGHT
 
 
 def make_args(**overrides):
@@ -183,6 +186,84 @@ def test_draw_preview_leaves_the_recorded_frame_clean():
     view = rc.draw_preview(frame, make_landmarks(), "status", (255, 255, 255))
     assert view.any()
     assert not frame.any()
+
+
+# --- arms-up warning -------------------------------------------------------
+
+def arm_landmarks(left_elbow, right_elbow):
+    """Shoulders at y=0, hips below; elbows given as (x, y)."""
+    points = [(0.5, 0.5, 0.0, 0.9)] * 33
+    points[LEFT["shoulder"]] = (0.0, 0.0, 0.0, 0.9)
+    points[LEFT["hip"]] = (0.0, 0.5, 0.0, 0.9)
+    points[LEFT["elbow"]] = (*left_elbow, 0.0, 0.9)
+    points[RIGHT["shoulder"]] = (-0.3, 0.0, 0.0, 0.9)
+    points[RIGHT["hip"]] = (-0.3, 0.5, 0.0, 0.9)
+    points[RIGHT["elbow"]] = (-0.3 + right_elbow[0], right_elbow[1], 0.0, 0.9)
+    return points
+
+
+DOWN = (0.0, 0.3)
+OUT = (0.3, 0.0)
+
+
+def test_arms_at_the_sides_do_not_warn():
+    assert rc.arms_up(arm_landmarks(DOWN, DOWN)) is False
+
+
+@pytest.mark.parametrize("left, right", [(OUT, DOWN), (DOWN, OUT), (OUT, OUT)])
+def test_either_raised_arm_warns(left, right):
+    assert rc.arms_up(arm_landmarks(left, right)) is True
+
+
+def test_the_warning_limit_is_45_degrees():
+    assert rc.arms_up(arm_landmarks((0.3, 0.3), DOWN)) is True  # exactly 45
+    assert rc.arms_up(arm_landmarks((0.2, 0.3), DOWN)) is False  # about 34
+
+
+def test_no_pose_does_not_warn():
+    assert rc.arms_up(None) is False
+
+
+def test_warning_bar_shows_only_on_the_preview_never_the_recorded_frame():
+    frame = np.zeros((480, 640, 3), np.uint8)
+    without = rc.draw_preview(frame, None, "status", (255, 255, 255))
+    with_warning = rc.draw_preview(frame, None, "status", (255, 255, 255), arms_up_warning=True)
+    assert tuple(with_warning[470, 630]) == (0, 0, 255)  # red in BGR
+    assert tuple(without[470, 630]) == (0, 0, 0)
+    assert not frame.any()
+
+
+def test_warning_stops_after_the_start_window():
+    drawn = []
+
+    class Worker:
+        landmarks = None
+        angle_landmarks = arm_landmarks(OUT, OUT)
+
+        def submit(self, frame):
+            pass
+
+    class Capture:
+        count = 0
+
+        def read(self):
+            self.count += 1
+            return self.count <= 3, np.zeros((48, 64, 3), np.uint8)
+
+    clock = iter([100.0, 101.0, 102.0, 103.0])
+
+    def fake_draw(frame, landmarks, status, colour, warning=False):
+        drawn.append(warning)
+        return frame
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(rc, "draw_preview", fake_draw)
+        patch.setattr(rc.cv2, "imshow", lambda *a: None)
+        patch.setattr(rc.cv2, "waitKey", lambda *a: 255)
+        patch.setattr(rc.time, "monotonic", lambda: next(clock))
+        spool = Path(tempfile.mkdtemp()) / "spool.raw"
+        rc.record_frames(Capture(), Worker(), spool, None)
+    assert drawn == [True, True, False]  # at 0 s and 1 s yes, at 2 s no
 
 
 # --- args ------------------------------------------------------------------
