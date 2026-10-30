@@ -139,6 +139,17 @@ def test_active_scoring_mode_reports_what_score_rep_applies(config, reference, e
     assert rules_module.active_scoring_mode(config, reference) == expected
 
 
+def test_reference_ignored_message_only_when_a_selected_reference_is_not_applied():
+    assert "NOT applied" in rules_module.reference_ignored_message({}, REFERENCE)
+    assert rules_module.reference_ignored_message({"mode": "reference_relative"}, REFERENCE) is None
+    assert rules_module.reference_ignored_message({}, None) is None
+
+
+def test_shipped_live_config_does_not_apply_a_selected_reference():
+    config = rules_module.load_config("shoulder_abduction")
+    assert rules_module.active_scoring_mode(config, REFERENCE) == "absolute"
+
+
 # --- session CSV ------------------------------------------------------------
 
 def test_session_csv_carries_the_rule_measurements(tmp_path):

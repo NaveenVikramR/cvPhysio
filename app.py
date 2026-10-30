@@ -266,8 +266,12 @@ if __name__ == "__main__":
             reference_choice = st.selectbox("Patient reference (optional)", ["None"] + [f.stem for f in reference_files])
             if reference_choice != "None":
                 reference = rules_module.load_reference(reference_dir / f"{reference_choice}.json")
-                st.info(f"Using reference '{reference_choice}' (k_reps={reference['k_reps']}, "
-                        f"config mode={rules_config.get('mode', 'absolute')!r})")
+                ignored_message = rules_module.reference_ignored_message(rules_config, reference)
+                if ignored_message:
+                    st.warning(ignored_message)
+                else:
+                    st.info(f"Using reference '{reference_choice}' (k_reps={reference['k_reps']}, "
+                            f"config mode={rules_config.get('mode', 'absolute')!r})")
 
         if "running" not in st.session_state:
             st.session_state.running = False

@@ -75,6 +75,15 @@ def active_scoring_mode(config: dict, reference: dict | None) -> str:
     return "absolute"
 
 
+def reference_ignored_message(config: dict, reference: dict | None) -> str | None:
+    """Warning text when a reference was selected but won't affect scoring,
+    otherwise None."""
+    if reference is None or active_scoring_mode(config, reference) == "reference_relative":
+        return None
+    return (f"Reference '{reference['name']}' is selected but NOT applied: this exercise's config scores in "
+            "absolute mode, so reps are scored against its fixed thresholds.")
+
+
 def _value(config: dict, key: str) -> float:
     return config[key]["value"]
 
