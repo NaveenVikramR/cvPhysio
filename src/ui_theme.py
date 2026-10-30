@@ -72,16 +72,25 @@ def escape(value) -> str:
     return html.escape(str(value), quote=True)
 
 
+# States whose label a caller's `detail` may override: FAIL (names the
+# failed rule) and the two purely-informational states IDLE/CALIBRATING
+# (e.g. a specific calibration_hint() string). PASS, INSUFFICIENT_DATA,
+# and ERROR keep their fixed, safety-relevant label no matter what a
+# caller passes, so a stray detail string can never silently replace
+# "Can't tell -- keep your whole arm in view" or similar.
+_DETAIL_OVERRIDABLE_STATES = (STATE_FAIL, STATE_IDLE, STATE_CALIBRATING)
+
+
 def state_display(state: str, detail: str | None = None) -> dict:
     """{"color", "icon", "label"} for one of ALL_STATES. `detail`, if
-    given, overrides the label for "fail" only (names the failed
-    rule) -- every other state ignores it, so a stray detail string
-    can never silently replace a safety-relevant label like the
-    insufficient_data text."""
+    given, overrides the label only for states in
+    _DETAIL_OVERRIDABLE_STATES -- every other state ignores it, so a
+    stray detail string can never silently replace a safety-relevant
+    label like the insufficient_data text."""
     if state not in _STATE_DISPLAY:
         raise ValueError(f"Unknown state {state!r}; must be one of {ALL_STATES}")
     result = dict(_STATE_DISPLAY[state])
-    if state == STATE_FAIL and detail:
+    if state in _DETAIL_OVERRIDABLE_STATES and detail:
         result["label"] = detail
     return result
 
@@ -187,14 +196,28 @@ def render_card_header(label: str, dot_color: str = MUTED) -> str:
     )
 
 
-def render_video_frame_wrapper(state: str) -> tuple[str, str]:
-    """Returns (open_div_html, close_div_html) for the glow ring around
-    the live video feed -- the actual st.image() call happens between
-    them in app.py, so the glow is pure CSS on a wrapping div, never a
-    filter/backdrop-filter on the video element itself."""
-    color = glow_ring_color(state)
-    open_html = f'<div class="cvp-video-ring" style="--cvp-ring:{color}">'
-    return open_html, '</div>'
+VIDEO_RING_CONTAINER_KEY = "cvp-video-ring"
+
+
+def render_video_ring_style(state: str) -> str:
+    """A tiny <style> snippet overriding the --cvp-ring-color custom
+    property that .st-key-cvp-video-ring (see css()) reads for its glow.
+
+    Callers must create `st.container(key=ui_theme.VIDEO_RING_CONTAINER_KEY)`
+    ONCE, before any per-frame loop, and place the video's st.empty()
+    placeholder INSIDE it -- st.container(key=...) is the only way to
+    get Streamlit to actually nest a widget inside custom-styled markup;
+    splitting a raw <div> open/close tag across two separate
+    st.markdown() calls does NOT nest a real widget placed in between
+    (confirmed against the installed Streamlit version), so an
+    open/close-div-pair function (an earlier version of this one) can't
+    actually draw a ring around the video and was replaced by this.
+
+    Call this once per detected state CHANGE, not unconditionally every
+    frame, and render it into its own small st.empty() placeholder --
+    the colour is the only thing that updates per frame-loop iteration;
+    the stylesheet itself (css()) still only renders once at start."""
+    return f'<style>:root{{--cvp-ring-color:{escape(glow_ring_color(state))}}}</style>'
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +247,16 @@ def css() -> str:
 
 .cvp-serif {{
   font-family: {SERIF_STACK};
+}}
+
+.cvp-topbar {{
+  display: flex;
+  align-items: center;
+  padding: 8px 0 20px 0;
+}}
+.cvp-topbar-brand {{
+  font-size: clamp(18px, 2vw, 22px);
+  font-weight: 600;
 }}
 
 .cvp-hero-heading {{
@@ -306,16 +339,50 @@ def css() -> str:
   border: 1px solid var(--cvp-orange);
 }}
 
-/* Video feed: rounded corners + a glow ring on the WRAPPER, never a
-   filter/backdrop-filter/animation on the video element itself (cost
-   real fps) -- see render_video_frame_wrapper(). */
-.cvp-video-ring {{
+/* Re-skin Streamlit's OWN native button/segmented-control widgets as
+   pills, instead of replacing them with raw HTML -- native widgets are
+   what actually wire clicks back to Python; raw HTML buttons can't,
+   without a custom component (ruled out: "no new dependencies"). These
+   selectors target Streamlit 1.66's data-testid/kind attributes; a
+   future Streamlit upgrade could rename them, in which case buttons
+   still work, they just lose this re-skin (CVPHYSIO_PLAIN_UI=1 always
+   gets Streamlit's own default button look regardless). */
+div[data-testid="stButton"] button[kind="primary"],
+div[data-testid="stButton"] button[data-testid="stBaseButton-primary"] {{
+  background: var(--cvp-white) !important;
+  color: var(--cvp-midnight) !important;
+  border: none !important;
+  border-radius: {PILL_RADIUS_PX}px !important;
+  font-weight: 600 !important;
+}}
+div[data-testid="stButton"] button[kind="secondary"],
+div[data-testid="stButton"] button[data-testid="stBaseButton-secondary"] {{
+  background: transparent !important;
+  color: var(--cvp-orange) !important;
+  border: 1px solid var(--cvp-orange) !important;
+  border-radius: {PILL_RADIUS_PX}px !important;
+}}
+/* st.segmented_control's selected option -- blue fill, midnight text
+   (an accent fill, so WCAG requires midnight text, same rule as any
+   other accent-filled pill). */
+div[data-testid="stSegmentedControl"] label[data-checked="true"],
+div[data-testid="stSegmentedControl"] [aria-checked="true"] {{
+  background: var(--cvp-blue) !important;
+  color: var(--cvp-midnight) !important;
+}}
+
+/* Video feed: rounded corners + a glow ring on the st.container(key=
+   VIDEO_RING_CONTAINER_KEY) WRAPPER, never a filter/backdrop-filter/
+   animation on the video element itself (costs real fps) -- the ring
+   colour is a CSS custom property updated by render_video_ring_style()
+   on state change only, not unconditionally every frame. */
+[class*="st-key-cvp-video-ring"] {{
   border-radius: {CARD_RADIUS_PX}px;
   padding: 6px;
-  box-shadow: 0 0 60px 10px var(--cvp-ring, {MUTED});
+  box-shadow: 0 0 60px 10px var(--cvp-ring-color, {MUTED});
   display: inline-block;
 }}
-.cvp-video-ring img {{
+[class*="st-key-cvp-video-ring"] img {{
   border-radius: {CARD_RADIUS_PX - 6}px;
   display: block;
 }}
@@ -376,6 +443,11 @@ def css() -> str:
   color: var(--cvp-accent, {WHITE});
   border: 1px solid var(--cvp-accent, {HAIRLINE});
   background: rgba(255,255,255,.04);
+}}
+.cvp-chip-row {{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }}
 
 /* Session log table */
