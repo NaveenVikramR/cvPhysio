@@ -290,3 +290,8 @@ def test_wcag_contrast_ratio(name, fg, bg, is_large):
     ratio = _contrast_ratio(fg, bg)
     required = 3.0 if is_large else 4.5
     assert ratio >= required, f"{name}: ratio={ratio:.2f}, required>={required} (fg={fg}, bg={bg})"
+
+
+def test_tempo_stat_shows_the_last_reps_duration():
+    assert theme.format_rep_tempo(3.84) == "3.8s"
+    assert theme.format_rep_tempo(None) == "—"

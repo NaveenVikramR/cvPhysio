@@ -173,7 +173,7 @@ else:
             st.image(annotated, channels="BGR")
         st.markdown(ui_theme.render_video_ring_style(preset["cue_state"]), unsafe_allow_html=True)
     with stats_right_col:
-        st.markdown(ui_theme.render_stat_block("Tempo (s/rep)", stat_value(preset["tempo_s"], "s")), unsafe_allow_html=True)
+        st.markdown(ui_theme.render_stat_block("Last rep tempo", stat_value(preset["tempo_s"], "s")), unsafe_allow_html=True)
         st.markdown(ui_theme.render_stat_block("FPS", stat_value(preset["fps"])), unsafe_allow_html=True)
 
     st.markdown(

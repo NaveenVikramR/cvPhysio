@@ -125,6 +125,12 @@ def format_allowed_range(lo: float, hi: float) -> str:
 # HTML-returning pure functions
 # ---------------------------------------------------------------------------
 
+def format_rep_tempo(duration_s: float | None) -> str:
+    """The Tempo stat: the last rep's real duration, the same figure the tempo
+    rule scored -- not session time / reps, which counts rests and pauses."""
+    return f"{duration_s:.1f}s" if duration_s is not None else "—"
+
+
 def render_stat_block(label: str, value: str) -> str:
     """One stat block: a serif numeral + a small uppercase caption.
     `value` is already formatted by the caller (e.g. "12", "84%", "—")

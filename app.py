@@ -319,7 +319,7 @@ if __name__ == "__main__":
             # number, and reads "--" until that state actually exists.
             reps_stat_slot.markdown(ui_theme.render_stat_block("Reps", "—"), unsafe_allow_html=True)
             form_stat_slot.markdown(ui_theme.render_stat_block("Form", "—"), unsafe_allow_html=True)
-            tempo_stat_slot.markdown(ui_theme.render_stat_block("Tempo (s/rep)", "—"), unsafe_allow_html=True)
+            tempo_stat_slot.markdown(ui_theme.render_stat_block("Last rep tempo", "—"), unsafe_allow_html=True)
             fps_stat_slot.markdown(ui_theme.render_stat_block("FPS", "—"), unsafe_allow_html=True)
             ring_style_slot.markdown(ui_theme.render_video_ring_style(ui_theme.STATE_IDLE), unsafe_allow_html=True)
             cue_slot.markdown(
@@ -356,7 +356,8 @@ if __name__ == "__main__":
             last_message = "Ready — begin your repetition."
             last_is_correct = None
             last_rule_results = None  # most recent rep's result["rules"], for the per-rule chips
-            session_start_t = time.monotonic()  # presentation only: drives the Tempo/FPS stats below
+            session_start_t = time.monotonic()  # presentation only: drives the FPS stat below
+            last_rep_duration_s = None  # presentation only: the Tempo stat, the last rep's real duration
             frame_count = 0
             loop_frames = 0
             last_ring_state = None  # only re-render the ring's <style> override on an actual state change
@@ -374,6 +375,7 @@ if __name__ == "__main__":
 
                     if event == "rep_complete":
                         rep_count += 1
+                        last_rep_duration_s = payload["duration_s"]
                         if ARGS.scorer == "rules":
                             rep = {
                                 "angle_deg": payload["angle_deg"],
@@ -492,11 +494,11 @@ if __name__ == "__main__":
                         passed_reps = sum(1 for r in scored_reps if r.status == RuleStatus.PASS.value)
                         form_value = f"{round(100 * passed_reps / len(scored_reps))}%" if scored_reps else "—"
                         elapsed = t - session_start_t
-                        tempo_value = f"{elapsed / rep_count:.1f}s" if rep_count else "—"
+                        tempo_value = ui_theme.format_rep_tempo(last_rep_duration_s)
                         fps_value = f"{frame_count / elapsed:.1f}" if elapsed > 0 else "—"
                         reps_stat_slot.markdown(ui_theme.render_stat_block("Reps", str(rep_count) if rep_count else "—"), unsafe_allow_html=True)
                         form_stat_slot.markdown(ui_theme.render_stat_block("Form", form_value), unsafe_allow_html=True)
-                        tempo_stat_slot.markdown(ui_theme.render_stat_block("Tempo (s/rep)", tempo_value), unsafe_allow_html=True)
+                        tempo_stat_slot.markdown(ui_theme.render_stat_block("Last rep tempo", tempo_value), unsafe_allow_html=True)
                         fps_stat_slot.markdown(ui_theme.render_stat_block("FPS", fps_value), unsafe_allow_html=True)
 
                         if last_rule_results:
