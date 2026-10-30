@@ -28,6 +28,7 @@ MIDNIGHT = "#02070A"
 DEEP = "#04152E"  # bottom of the page's vertical gradient
 ELECTRIC_BLUE = "#0297DE"
 CANTALOUPE = "#FC734D"
+AMBER = "#F2B84B"  # advisory rule chips only
 WHITE = "#FFFFFF"
 MUTED = "rgba(255,255,255,.64)"
 HAIRLINE = "rgba(255,255,255,.14)"
@@ -158,15 +159,22 @@ def render_cue_banner(state: str, detail: str | None = None) -> str:
     )
 
 
-def render_rule_chip(rule_id: str, measured: float, allowed: tuple[float, float], passed: bool) -> str:
-    state = STATE_PASS if passed else STATE_FAIL
-    d = state_display(state, rule_id.replace("_", " ") if not passed else None)
+def render_rule_chip(rule_id: str, measured: float, allowed: tuple[float, float], passed: bool,
+                     advisory: bool = False) -> str:
+    """advisory: this rule doesn't count toward the verdict, so a failure shows
+    amber with an "advisory" label, never the failure colour."""
+    if advisory and not passed:
+        css_state, color, icon, suffix = "advisory", AMBER, "!", " · advisory"
+    else:
+        css_state = STATE_PASS if passed else STATE_FAIL
+        d = state_display(css_state, rule_id.replace("_", " ") if not passed else None)
+        color, icon, suffix = d["color"], d["icon"], ""
     allowed_text = format_allowed_range(allowed[0], allowed[1])
     return (
-        f'<span class="cvp-chip cvp-chip-{escape(state)}" style="--cvp-accent:{d["color"]}">'
-        f'<span class="cvp-chip-icon" aria-hidden="true">{d["icon"]}</span>'
+        f'<span class="cvp-chip cvp-chip-{escape(css_state)}" style="--cvp-accent:{color}">'
+        f'<span class="cvp-chip-icon" aria-hidden="true">{icon}</span>'
         f'<span class="cvp-chip-text">{escape(rule_id)}: {escape(f"{measured:.1f}")} '
-        f'(allowed {escape(allowed_text)})</span>'
+        f'(allowed {escape(allowed_text)}){suffix}</span>'
         '</span>'
     )
 

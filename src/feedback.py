@@ -124,6 +124,8 @@ def message_for_rules_result(result: dict) -> str:
     drift apart (see open_questions.md #7)."""
     if result["status"] == "insufficient_data":
         return f"Not enough visible tracking to score this rep ({result['valid_fraction']:.0%} valid)."
+    advisory = result.get("advisory_failed")
+    note = f" (Advisory: {', '.join(advisory)})" if advisory else ""
     if result["status"] == "pass":
-        return "Good form!"
-    return "Needs adjustment: " + ", ".join(result["failed_rules"])
+        return "Good form!" + note
+    return "Needs adjustment: " + ", ".join(result["failed_rules"]) + note

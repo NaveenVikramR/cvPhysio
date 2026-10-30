@@ -22,6 +22,7 @@ config in the repo.
 | `min_elbow_straight_deg.value` | number | degrees | minimum elbow angle (shoulder-elbow-wrist) allowed anywhere in the rep | `135` | yes | `src/rules.py` `score_rep()`. |
 | `min_elbow_straight_deg.comment` | string | — | rationale for the 150→135 change (cites UI-PRMD measurement) | (long string) | — | **Not read by any code** — this key only exists on `min_elbow_straight_deg`, not the other thresholds. |
 | `elbow_statistic` | string | — | optional; what `elbow_straight` measures per rep. `"min"`: smallest gated elbow angle in the rep. `"hold_median"`: median gated elbow angle within +/-0.3 s of the peak shoulder angle | absent (means `"min"`) | not marked | `src/rules.py` `elbow_statistic()`. |
+| `advisory_rules` | list[string] | — | optional; rule ids that still report and appear in feedback and logs, but don't affect pass/fail or FORM in the app | absent (means none) | not marked | `src/pipeline.py` `apply_advisory_rules()`, called from `app.py`. |
 | `max_trunk_lean_deg.value` | number | degrees | maximum trunk-lean angle allowed anywhere in the rep | `15` | yes | `src/rules.py` `score_rep()`. |
 | `tempo_min_s.value` | number | seconds | minimum rep duration (frame count / fps) | `1.0` | yes | `src/rules.py` `score_rep()`. |
 | `tempo_max_s.value` | number | seconds | maximum rep duration | `6.0` | yes | `src/rules.py` `score_rep()`. |

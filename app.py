@@ -25,6 +25,7 @@ from src.feature_extraction import EXERCISES, extract_rep_features
 from src.feedback import SpeechFeedback, draw_overlay, message_for_result, message_for_rules_result
 from src.pipeline import (
     MODELS_DIR,
+    apply_advisory_rules,
     Session,
     build_smoother,
     live_rep_fps,
@@ -154,7 +155,7 @@ def run_headless(video_path: str, exercise: str, scorer: str, span: tuple[int, i
                     "valid_fraction": payload["valid_fraction"],
                     "frame_t": payload["frame_t"],
                 }
-                result = rules_module.score_rep(rep, config, fps, reference=reference)
+                result = apply_advisory_rules(rules_module.score_rep(rep, config, fps, reference=reference), config)
                 print(f"Rep {rep_count}: {result['status'].upper()}  failed_rules={result['failed_rules']}  "
                       f"valid_fraction={result['valid_fraction']:.2f}")
                 for rule_id, r in result["rules"].items():
@@ -390,7 +391,9 @@ if __name__ == "__main__":
                                 "frame_t": payload["frame_t"],
                             }
                             rep_fps = live_rep_fps(payload, fps)
-                            result = rules_module.score_rep(rep, rules_config, rep_fps, reference=reference)
+                            result = apply_advisory_rules(
+                                rules_module.score_rep(rep, rules_config, rep_fps, reference=reference), rules_config,
+                            )
                             last_rule_results = result["rules"]
                             side_value = Counter(payload["side"]).most_common(1)[0][0]
                             tracker.add_rep(RepRecord(
@@ -403,6 +406,7 @@ if __name__ == "__main__":
                                 trunk_max_deg=result["rules"]["trunk_lean"]["measured"],
                                 tempo_s=result["rules"]["tempo"]["measured"],
                                 failed_rules=";".join(result["failed_rules"]),
+                                advisory_failed_rules=";".join(result["advisory_failed"]),
                                 scoring_mode=rules_module.active_scoring_mode(rules_config, reference),
                                 reference_name=reference["name"] if reference else None,
                                 valid_fraction=payload["valid_fraction"],
@@ -510,7 +514,10 @@ if __name__ == "__main__":
 
                         if last_rule_results:
                             chips = "".join(
-                                ui_theme.render_rule_chip(rule_id, r["measured"], tuple(r["allowed"]), r["passed"])
+                                ui_theme.render_rule_chip(
+                                    rule_id, r["measured"], tuple(r["allowed"]), r["passed"],
+                                    advisory=rule_id in rules_config.get("advisory_rules", []),
+                                )
                                 for rule_id, r in last_rule_results.items()
                             )
                             live_feedback_slot.markdown(

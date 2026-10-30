@@ -30,7 +30,7 @@ from src.feature_extraction import (
     select_side,
 )
 from src.feedback import LANDMARK_LABELS
-from src.statuses import DiscardReason
+from src.statuses import DiscardReason, RuleStatus
 
 MODELS_DIR = Path("models")
 # The only feature_source src/dataset_loader.py's FK positions produce and
@@ -296,6 +296,26 @@ def live_rep_fps(payload: dict, fallback_fps: float) -> float:
     if duration_s and duration_s > 0:
         return len(payload["angle_deg"]) / duration_s
     return fallback_fps
+
+
+def apply_advisory_rules(result: dict, config: dict) -> dict:
+    """score_rep()'s result with config["advisory_rules"] taken out of the
+    verdict: those rules still report their measurements in result["rules"], and
+    any that failed move to result["advisory_failed"], but they no longer count
+    toward failed_rules or status. With no such key (the default) the verdict is
+    unchanged. insufficient_data stays insufficient_data either way."""
+    advisory = config.get("advisory_rules", [])
+    unknown = [rule for rule in advisory if rule not in result["rules"]]
+    if unknown:
+        raise ValueError(f"advisory_rules has unknown rules {unknown}; must be from {list(result['rules'])}")
+    failed_rules = [rule for rule in result["failed_rules"] if rule not in advisory]
+    status = result["status"]
+    if status != RuleStatus.INSUFFICIENT_DATA.value:
+        status = (RuleStatus.FAIL if failed_rules else RuleStatus.PASS).value
+    return {
+        **result, "status": status, "failed_rules": failed_rules,
+        "advisory_failed": [rule for rule in result["failed_rules"] if rule in advisory],
+    }
 
 
 def build_smoother():

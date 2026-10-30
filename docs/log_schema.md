@@ -21,7 +21,8 @@ that was then scored). From `RepRecord` in `src/tracking.py`.
 | `elbow_min_deg` | float or empty | degrees | **rules scorer**: what `elbow_straight` measured (the rep's smallest gated elbow angle). Empty for the classifier scorer, as are all the columns below. |
 | `trunk_max_deg` | float or empty | degrees | what `trunk_lean` measured (the rep's largest gated trunk lean). |
 | `tempo_s` | float or empty | seconds | what the `tempo` rule measured. |
-| `failed_rules` | string or empty | — | `;`-joined rule ids that failed. Empty on a pass; can be non-empty on `insufficient_data`. |
+| `failed_rules` | string or empty | — | `;`-joined rule ids that failed and count toward the verdict. Empty on a pass; can be non-empty on `insufficient_data`. |
+| `advisory_failed_rules` | string or empty | — | `;`-joined rule ids that failed but are listed in the config's `advisory_rules`, so don't count toward `status`. |
 | `scoring_mode` | string or empty | — | the mode actually applied, `"absolute"` or `"reference_relative"` (`src.rules.active_scoring_mode()`). |
 | `reference_name` | string or empty | — | the reference selected for the session. Selected isn't the same as applied: check `scoring_mode`. |
 | `valid_fraction` | float or empty | fraction `[0,1]` | frames of the rep's span that passed the whole confidence gate. |

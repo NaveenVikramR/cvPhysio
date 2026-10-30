@@ -26,7 +26,8 @@ class RepRecord:
     elbow_min_deg: float | None = None
     trunk_max_deg: float | None = None
     tempo_s: float | None = None
-    failed_rules: str | None = None  # ";"-joined rule ids, as they failed
+    failed_rules: str | None = None  # ";"-joined rule ids that count toward the verdict
+    advisory_failed_rules: str | None = None  # ";"-joined advisory rule ids that failed, not counted
     scoring_mode: str | None = None  # the mode actually applied (src.rules.active_scoring_mode)
     reference_name: str | None = None  # the selected reference, whether or not it was applied
     valid_fraction: float | None = None
