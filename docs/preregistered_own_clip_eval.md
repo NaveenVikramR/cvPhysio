@@ -130,6 +130,14 @@ Measured on REHAB24-6, front view, against mocap:
   above 160 deg).
 - World x,y elbow angle compared with 3D: MAE 8.39 vs 13.09 deg, but r 0.469 vs 0.647.
 
+These REHAB24-6 figures are **reported from the PC run; not reproduced on this
+laptop**. They were computed on the PC from calibration subjects 1 and 2 only, camera
+17 front, 3 recordings (PM_000, PM_001, PM_012), n = 6658 valid frames, with a 0.5
+visibility gate on shoulder, elbow and wrist. The output file `results/elbow_variants.md`
+exists only on that PC, because `results/` is gitignored. The script is reported as
+commit `62e0290` on the PC's copy of this branch (cherry-picked from `da881fb`). When
+this section was written, neither commit was in the laptop's repository or on the remote.
+
 Measured on the laptop with one person:
 
 - Held straight arm reads about 143-145 deg, with single-frame minima of 122-124 deg
