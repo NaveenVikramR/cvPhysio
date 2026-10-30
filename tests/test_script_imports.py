@@ -34,6 +34,7 @@ SCRIPT_MODULES = [
     "scripts.build_review3_summary",
     "scripts.compare_pose_models",
     "scripts.evaluate_own_clips",
+    "scripts.measure_elbow_noise",
     "scripts.check_environment",
     "scripts.evaluate_rules",
     "scripts.measure_smoothing_effect",
