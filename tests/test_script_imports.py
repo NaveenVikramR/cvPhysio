@@ -42,6 +42,7 @@ SCRIPT_MODULES = [
     "scripts.measure_smoothing_effect",
     "scripts.plot_session_trace",
     "scripts.render_landmark_figure",
+    "scripts.qc_all",
     "scripts.qc_clip",
     "scripts.rescore_session",
     "scripts.rotation_proxy_experiment",
