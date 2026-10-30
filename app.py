@@ -27,11 +27,12 @@ from src.pipeline import (
     MODELS_DIR,
     Session,
     build_smoother,
+    live_rep_fps,
     load_classifier_for_live_use,
 )
 from src.pose_estimation import get_pose_landmarks, open_webcam
 from src.statuses import RuleStatus
-from src.tracking import DiscardRecord, RepRecord, SessionTracker, load_history
+from src.tracking import DiscardRecord, RepRecord, SessionTracker, rep_start_timestamp, load_history
 
 CLASSIFIER_WARNING = (
     "WARNING: --scorer classifier was trained on UI-PRMD Kinect recordings, "
@@ -380,7 +381,7 @@ if __name__ == "__main__":
                                 "trunk_lean_deg": payload["trunk_lean_deg"],
                                 "valid_fraction": payload["valid_fraction"],
                             }
-                            result = rules_module.score_rep(rep, rules_config, fps, reference=reference)
+                            result = rules_module.score_rep(rep, rules_config, live_rep_fps(payload, fps), reference=reference)
                             last_rule_results = result["rules"]
                             side_value = Counter(payload["side"]).most_common(1)[0][0]
                             tracker.add_rep(RepRecord(
@@ -398,6 +399,7 @@ if __name__ == "__main__":
                                 valid_fraction=payload["valid_fraction"],
                                 elbow_wrist_visible_fraction=payload["elbow_wrist_visible_fraction"],
                                 n_valid_frames=len(rep["angle_deg"]),
+                                rep_start_timestamp=rep_start_timestamp(payload["duration_s"]),
                             ))
                             last_message = f"Rep {rep_count}: {message_for_rules_result(result)}"
                             if result["warning"]:
@@ -589,6 +591,7 @@ if __name__ == "__main__":
                         collected_reps.append({
                             "angle_deg": payload["angle_deg"], "elbow_angle_deg": payload["elbow_angle_deg"],
                             "trunk_lean_deg": payload["trunk_lean_deg"],
+                            "fps": live_rep_fps(payload, fps),
                         })
                         if PLAIN_UI:
                             status_slot.write(f"Captured rep {len(collected_reps)}/{k_reps}")

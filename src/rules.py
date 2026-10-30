@@ -203,11 +203,13 @@ def rep_summary_features(rep: dict, fps: float) -> dict:
 def build_reference(name: str, exercise: str, reps: list[dict], fps: float) -> dict:
     """Median of rep_summary_features() over `reps` (K repetitions --
     e.g. captured once at the start of a patient's session, or a
-    therapist's own demonstration). Raises ValueError if reps is empty
-    -- a reference needs at least one rep to be meaningful."""
+    therapist's own demonstration). A rep carrying its own "fps" is timed
+    with that (live reps: see src.pipeline.live_rep_fps()), otherwise with
+    fps. Raises ValueError if reps is empty -- a reference needs at least
+    one rep to be meaningful."""
     if not reps:
         raise ValueError("build_reference() needs at least one rep")
-    summaries = [rep_summary_features(rep, fps) for rep in reps]
+    summaries = [rep_summary_features(rep, rep.get("fps", fps)) for rep in reps]
     medians = {
         col: float(statistics.median(s[col] for s in summaries))
         for col in ("peak_angle", "elbow_min", "trunk_max", "tempo_s")

@@ -250,6 +250,9 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
     event, payload = detector.update(visible, angle_deg, side, failed)
     new_state = detector.state
 
+    if prev_state == "RESTING" and new_state == "MOVING":
+        parallel["rep_start_t"] = t
+
     in_rep_span = prev_state == "MOVING" or (prev_state == "RESTING" and new_state == "MOVING")
     if in_rep_span:
         parallel["total_frames"] += 1
@@ -267,6 +270,8 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
         payload["elbow_wrist_visible_fraction"] = (
             parallel.get("elbow_wrist_visible_frames", 0) / parallel["total_frames"] if parallel["total_frames"] else 0.0
         )
+        rep_start_t = parallel.get("rep_start_t")
+        payload["duration_s"] = t - rep_start_t if t is not None and rep_start_t is not None else None
 
     if prev_state == "MOVING" and new_state == "RESTING":
         parallel["elbow"].clear()
@@ -275,6 +280,18 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
         parallel["elbow_wrist_visible_frames"] = 0
 
     return event, payload, visible, failed
+
+
+def live_rep_fps(payload: dict, fallback_fps: float) -> float:
+    """The fps to score one live rep with, so score_rep()'s frames/fps tempo
+    equals the rep's real duration (payload["duration_s"]). A webcam's
+    reported fps is only nominal: the frame loop can run well below it, and
+    gated frames are missing from the count, so frames/nominal_fps understates
+    the time taken. fallback_fps applies only if no duration was measured."""
+    duration_s = payload.get("duration_s")
+    if duration_s and duration_s > 0:
+        return len(payload["angle_deg"]) / duration_s
+    return fallback_fps
 
 
 def build_smoother():

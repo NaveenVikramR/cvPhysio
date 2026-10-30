@@ -5,7 +5,7 @@ angle, correctness, confidence). Output: session log files + summaries.
 import csv
 import json
 from dataclasses import asdict, dataclass, field, fields
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from src.statuses import RuleStatus
@@ -43,6 +43,13 @@ class DiscardRecord:
     reason_code: str
     message: str
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+def rep_start_timestamp(duration_s: float | None, now: datetime | None = None) -> str | None:
+    """ISO-8601 UTC start of a rep ending now, or None if it wasn't timed."""
+    if duration_s is None:
+        return None
+    return ((now or datetime.now(timezone.utc)) - timedelta(seconds=duration_s)).isoformat()
 
 
 class SessionTracker:
