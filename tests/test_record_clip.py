@@ -271,6 +271,40 @@ def test_warning_stops_after_the_start_window():
 BASE_ARGS = ["--role", "eval", "--intended", "correct", "--expected-reps", "6", "--subject", "demo"]
 
 
+def test_countdown_defaults_to_15_and_the_old_5_is_still_available():
+    assert rc.parse_args(BASE_ARGS).countdown == 15.0
+    assert rc.parse_args(BASE_ARGS + ["--countdown", "5"]).countdown == 5.0
+    with pytest.raises(SystemExit):
+        rc.parse_args(BASE_ARGS + ["--countdown", "-1"])
+
+
+def test_countdown_length_is_what_the_preview_waits():
+    class Worker:
+        landmarks = None
+        angle_landmarks = None
+
+        def submit(self, frame):
+            pass
+
+    class Capture:
+        def read(self):
+            return True, np.zeros((48, 64, 3), np.uint8)
+
+    now = {"t": 0.0}
+
+    def tick():
+        now["t"] += 1.0
+        return now["t"]
+
+    keys = iter([ord(" ")])
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(rc.cv2, "imshow", lambda *a: None)
+        patch.setattr(rc.cv2, "waitKey", lambda *a: next(keys, 255))
+        patch.setattr(rc.time, "monotonic", tick)
+        assert rc.wait_for_start(Capture(), Worker(), 15.0) is True
+    assert 15.0 <= now["t"] <= 18.0  # about one tick per frame after SPACE
+
+
 def test_args_defaults():
     args = rc.parse_args(BASE_ARGS)
     assert args.camera == rc.DEFAULT_CAMERA_INDEX

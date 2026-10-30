@@ -7,7 +7,7 @@ the camera's default mode delivers. The actual values are what the sidecar
 records.
 
 Flow: live preview (framing box, skeleton, warnings) -> SPACE starts the
-5-second countdown -> records until 'q' or --seconds. ESC at any point
+countdown (--countdown, default 15 s) -> records until 'q' or --seconds. ESC at any point
 discards the take and writes nothing.
 
 The saved video holds the clean camera frames, never the preview overlays.
@@ -46,7 +46,7 @@ INTENDED = ("correct", "fault_lowarm", "fault_trunk", "fault_elbow", "fault_fast
 MANIFEST_COLUMNS = ["clip", "role", "intended", "expected_reps", "subject", "notes"]
 
 DEFAULT_CAMERA_INDEX = 0  # open_webcam()'s default, which is what app.py calls
-COUNTDOWN_S = 5
+DEFAULT_COUNTDOWN_S = 15.0  # time to walk from the keyboard to the recording spot
 MIN_VISIBILITY = 0.5  # same threshold as the confidence gate
 FRAME_MARGIN_FRAC = 0.05  # framing box inset, as a fraction of each dimension
 ARMS_UP_DEG = 45.0  # same limit as scripts/qc_clip.py's arms_down check
@@ -278,7 +278,7 @@ def show(frame, worker: PoseWorker, status: str, colour: tuple, check_arms: bool
     return cv2.waitKey(1) & 0xFF
 
 
-def wait_for_start(capture, worker: PoseWorker) -> bool:
+def wait_for_start(capture, worker: PoseWorker, countdown_s: float = DEFAULT_COUNTDOWN_S) -> bool:
     """Framing preview, then countdown. False if the take was discarded."""
     while True:
         ok, frame = capture.read()
@@ -289,7 +289,7 @@ def wait_for_start(capture, worker: PoseWorker) -> bool:
             return False
         if key == ord(" "):
             break
-    deadline = time.monotonic() + COUNTDOWN_S
+    deadline = time.monotonic() + countdown_s
     while (remaining := deadline - time.monotonic()) > 0:
         ok, frame = capture.read()
         if not ok:
@@ -332,7 +332,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--notes", default="")
     parser.add_argument("--camera", type=int, default=DEFAULT_CAMERA_INDEX)
     parser.add_argument("--seconds", type=float, default=None, help="stop automatically after this long")
+    parser.add_argument("--countdown", type=float, default=DEFAULT_COUNTDOWN_S,
+                        help=f"seconds between SPACE and recording (default {DEFAULT_COUNTDOWN_S:g}; the old default was 5)")
     args = parser.parse_args(argv)
+    if args.countdown < 0:
+        parser.error("--countdown can't be negative")
     if args.role != "eval" and args.intended != "correct":
         parser.error(f"--role {args.role} must use --intended correct (docs/recording_protocol.md)")
     if args.expected_reps < 1:
@@ -364,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
     worker.start()
     spool_path = RECORDINGS_DIR / ".record_clip_spool.raw"
     try:
-        if not wait_for_start(capture, worker):
+        if not wait_for_start(capture, worker, args.countdown):
             print("Discarded before recording. Nothing was saved.")
             return 1
         started_at = datetime.now().astimezone().isoformat(timespec="seconds")
