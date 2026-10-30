@@ -13,6 +13,8 @@ Needs a pose-landmarker model bundle at models/pose_landmarker_lite.task
 (downloaded once from Google's model zoo: https://storage.googleapis.com/
 mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/
 pose_landmarker_lite.task -- gitignored, not committed, ~5.8MB).
+config/pose.json's "pose_model" selects "lite" (default) or "heavy"
+(models/pose_landmarker_heavy.task, same URL pattern, also gitignored).
 
 Runs in VIDEO mode (not IMAGE) so MediaPipe reuses temporal context
 between frames the way the old solutions API implicitly did for a video
@@ -39,26 +41,51 @@ import mediapipe as mp
 from mediapipe.tasks.python import BaseOptions
 from mediapipe.tasks.python.vision import PoseLandmarker, PoseLandmarkerOptions, RunningMode
 
-_MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "pose_landmarker_lite.task"
-_MODEL_URL = (
-    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
-    "pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
-)
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+POSE_MODELS = ("lite", "heavy")
 CONFIG_PATH = Path("config/pose.json")
 
-if not _MODEL_PATH.exists():
-    raise FileNotFoundError(
-        f"Missing pose-landmarker model bundle at {_MODEL_PATH}. "
-        f"Download it from {_MODEL_URL} and save it to that exact path "
-        f"(~5.8MB; gitignored, not committed -- see docs/laptop_setup.md)."
+
+def model_path(model: str) -> Path:
+    return _REPO_ROOT / "models" / f"pose_landmarker_{model}.task"
+
+
+def model_url(model: str) -> str:
+    return (
+        "https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
+        f"pose_landmarker_{model}/float16/latest/pose_landmarker_{model}.task"
     )
 
-_landmarker = PoseLandmarker.create_from_options(PoseLandmarkerOptions(
-    base_options=BaseOptions(model_asset_path=str(_MODEL_PATH)),
-    running_mode=RunningMode.VIDEO,
-    min_pose_detection_confidence=0.5,
-    min_tracking_confidence=0.5,
-))
+
+def configured_pose_model(config_path: Path | None = None) -> str:
+    """config/pose.json's "pose_model" (default "lite"). Anchored to the repo
+    root by default because it's read at import time, from any working directory."""
+    config = json.loads((config_path or _REPO_ROOT / CONFIG_PATH).read_text())
+    model = config.get("pose_model", "lite")
+    if model not in POSE_MODELS:
+        raise ValueError(f"config/pose.json pose_model={model!r}; must be one of {POSE_MODELS}")
+    return model
+
+
+def create_landmarker(model: str) -> PoseLandmarker:
+    path = model_path(model)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing pose-landmarker model bundle at {path}. "
+            f"Download it from {model_url(model)} and save it to that exact path "
+            f"(gitignored, not committed -- see docs/laptop_setup.md)."
+        )
+    return PoseLandmarker.create_from_options(PoseLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=str(path)),
+        running_mode=RunningMode.VIDEO,
+        min_pose_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    ))
+
+
+_POSE_MODEL = configured_pose_model()
+_MODEL_PATH = model_path(_POSE_MODEL)
+_landmarker = create_landmarker(_POSE_MODEL)
 
 _next_timestamp_ms = 0
 

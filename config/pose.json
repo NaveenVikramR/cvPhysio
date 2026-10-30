@@ -1,4 +1,6 @@
 {
+  "pose_model": "lite",
+  "pose_model_comment": "lite (default) or heavy: which MediaPipe bundle src/pose_estimation.py loads from models/. See scripts/compare_pose_models.py for how the two compare. Changing this invalidates anything measured with the other model.",
   "landmark_space": "world",
   "landmark_space_comment": "world = MediaPipe's pose_world_landmarks (metric, hip-centered), fed into compute_angle() etc. as-is. normalized = MediaPipe's pose_landmarks (image-space, independently divided by frame width/height) -- the pre-this-change behavior, kept reachable for reproducibility. See results/diag_coords.md and results/diag_coords_C.md for why world was adopted as the default (it does not meet every pre-registered adoption-rule criterion either, but is the closer of the two to the mocap ground truth)."
 }

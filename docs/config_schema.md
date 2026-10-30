@@ -74,6 +74,8 @@ build_benchmark_config.py` — never hand-edited.
 |---|---|---|---|---|---|
 | `landmark_space` | string | — | which of MediaPipe's two landmark sets `src.pose_estimation.get_pose_landmarks()` returns: `"world"` (metric, hip-centered — the default, adopted as a spec-conformance fix) or `"normalized"` (image-space, independently divided by frame width/height — the pre-this-key behavior, kept reachable for reproducibility) | `"world"` | `src/pose_estimation.py` `get_pose_landmarks()`: `load_config().get("landmark_space", "world")`. Also read (and recorded in their own results headers) by `scripts/benchmark_rehab24.py` and `scripts/evaluate_rules.py` via `pose_estimation.load_config()`. |
 | `landmark_space_comment` | string | — | rationale (cites `results/diag_coords.md`/`diag_coords_C.md`) | (long string) | **Not read by any code.** |
+| `pose_model` | string | — | which MediaPipe bundle loads from `models/`: `"lite"` or `"heavy"`; absent means `"lite"` | `"lite"` | `src/pose_estimation.py` `configured_pose_model()`, at import. |
+| `pose_model_comment` | string | — | what the key does | (long string) | **Not read by any code.** |
 
 Unlike the exercise configs, this file has no `{"value": ...}`
 wrapper — `landmark_space` is read as a plain string
