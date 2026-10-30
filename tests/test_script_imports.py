@@ -38,6 +38,7 @@ SCRIPT_MODULES = [
     "scripts.check_environment",
     "scripts.evaluate_rules",
     "scripts.measure_smoothing_effect",
+    "scripts.rescore_session",
     "scripts.rotation_proxy_experiment",
     "scripts.tune_smoothing",
 ]
