@@ -213,3 +213,110 @@ The number of failed takes per clip and the failing check are reported with the 
 - **QC selects takes:** it keeps only takes whose reps the detector can count. A fault
   movement the detector can't segment, such as a very brief rep, is re-recorded and not
   counted as missed, so the results apply only to reps the detector segmented.
+
+## Amendment 3 (2026-10-30)
+
+Appended before any rule was scored on these takes. Where this section differs from the
+text above, this section applies. The frozen files, thresholds and Amendment 1's
+outcomes are unchanged.
+
+### Failed takes
+
+These eight takes failed `scripts/qc_clip.py`, each run alone in its own process. All
+eight are excluded from scoring: they're renamed with a `spare_` prefix in
+`data/recordings/` and have no manifest row.
+
+| Take | Failed checks | Rep count (detected / planned) |
+|---|---|---:|
+| `abd_reference_correct_01` | arms down, rep count, tracking | 0 / 3 |
+| `abd_calibration_correct_01` | arms down, rep count, tracking | 6 / 5 |
+| `abd_eval_correct_01` | arms down, rep count, tracking | 9 / 6 |
+| `abd_eval_fault_lowarm_01` | rep count | 6 / 3 |
+| `abd_eval_fault_trunk_01` | arms down, rep count | 7 / 3 |
+| `abd_eval_fault_trunk_02` | arms down | 3 / 3 |
+| `abd_eval_fault_elbow_01` | arms down, rep count, tracking | 1 / 3 |
+| `abd_eval_fault_elbow_02` | arms down | 3 / 3 |
+
+`abd_eval_fault_trunk_03` passed all three checks when run after other clips in one
+process, but fails the tracking check when run alone, by one frame (longest gated-out run
+11 frames, limit 10), on each of four runs. The alone result decides, so it is a ninth
+failed take, excluded from scoring and re-recorded like the others. It is now
+`spare_abd_eval_fault_trunk_03`.
+
+### Takes that failed during re-recording
+
+These ten later takes also failed `scripts/qc_clip.py`, run alone, and are excluded from
+scoring in the same way:
+
+| Take (file name now) | Failed checks | Rep count (detected / planned) |
+|---|---|---:|
+| `spare_abd_reference_correct_01_take2` | arms down | 3 / 3 |
+| `spare_abd_calibration_correct_01_take2` | arms down, rep count, tracking | 4 / 5 |
+| `spare_abd_calibration_correct_01_take3` | arms down | 5 / 5 |
+| `spare_abd_eval_correct_01_take2` | arms down | 6 / 6 |
+| `spare_abd_eval_fault_lowarm_01_take2` | rep count | 0 / 3 |
+| `spare_abd_eval_fault_lowarm_01_take3` | rep count | 1 / 3 |
+| `spare_abd_eval_fault_lowarm_01_take4` | tracking | 3 / 3 |
+| `spare_abd_eval_fault_trunk_01_take3` | rep count | 4 / 3 |
+| `spare_abd_eval_fault_trunk_01_take4` | rep count | 0 / 3 |
+| `spare_abd_eval_fault_trunk_03_take2` | rep count | 2 / 3 |
+
+That makes 19 failed takes in all, across the seven clips.
+
+### Clips used
+
+The first take of each clip to pass all three checks alone:
+
+| Clip | Failed takes before it |
+|---|---:|
+| `abd_reference_correct_02` | 2 |
+| `abd_calibration_correct_01` | 3 |
+| `abd_eval_correct_01` | 2 |
+| `abd_eval_fault_lowarm_01` | 4 |
+| `abd_eval_fault_trunk_02` | 5 |
+| `abd_eval_fault_elbow_01` | 2 |
+| `abd_eval_fault_fast_01` | 0 |
+
+`spare_abd_eval_fault_trunk_03_take2` was recorded after `abd_eval_fault_trunk_02` had been
+recorded, before that take's QC result had been reviewed. It failed and isn't used.
+
+This many failed takes means the clips used are the takes that met these recording
+conditions, not a typical attempt, as the "QC selects takes" limitation in Amendment 2 says.
+
+### Disclosure
+
+During diagnosis, detector peak angles, rep ranges and rep timings, and per-second
+shoulder angle ranges, were printed for the eight takes in the table, including the six
+eval-role takes. No rule was scored. That output was not produced for
+`abd_eval_fault_trunk_03`, for which only the three QC results were printed. Later, the
+detector's state changes and discard reasons, with no angles, were printed for the take
+now named `spare_abd_eval_fault_trunk_01_take4`. For every other take, including all seven
+clips used, only the QC results were printed.
+
+Recording guidance given after failed takes concerned framing, rest, timing and movement
+size. It was based on QC results and these outputs, and on no rule score. The guidance for
+the arm-too-low clip did follow the diagnosis output described above.
+
+The clips were recorded with the `--countdown` change in the working tree, before it was
+committed. The evaluator runs only after it and this amendment are committed.
+
+Running every clip in one process gave different details from running each alone: for
+`abd_eval_fault_elbow_01`, the arms-down check passed in one process and failed alone, and
+`abd_eval_correct_01` had one more tracking loss. Pose tracking carries over between clips
+in one process, as it does in the evaluator.
+
+### Recording rules added
+
+- The countdown between pressing SPACE and recording is 15 s (`--countdown`, default 15),
+  so the subject is in position, arms down, before recording starts.
+- The subject stops at the planned rep count and stands still, arms down, until the
+  `--seconds` limit ends the clip.
+
+### Final check before scoring
+
+`scripts/qc_all.py` (not a pinned file) is run once, after every clip passes
+`scripts/qc_clip.py` and before `scripts/evaluate_own_clips.py`. It checks that the manifest
+holds exactly the planned clips, runs each clip alone, then runs all of them in one process
+in the evaluator's order, and prints detected and planned reps for each. The evaluator is
+not run if a clip fails in the combined run, or if any clip's rep count differs between the
+two runs. It uses the pose model and rep detector only and scores no rule.
