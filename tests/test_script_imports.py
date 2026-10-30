@@ -32,6 +32,7 @@ SCRIPT_MODULES = [
     "scripts.evaluate_reference_scoring",
     "scripts.evaluate_oracle_ceiling",
     "scripts.build_review3_summary",
+    "scripts.compare_AB_sessions",
     "scripts.compare_pose_models",
     "scripts.evaluate_own_clips",
     "scripts.measure_elbow_noise",
