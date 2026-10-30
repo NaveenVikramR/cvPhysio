@@ -9,17 +9,16 @@ subjects or cameras the way the REHAB24-6 work had to.
 
 ## Camera setup
 
-- Camera at **chest height**, approximately **2 m** from the subject.
+- Laptop at **chest height on a stand**, **2-2.5 m** from the subject.
 - **Front view**: the camera faces the subject directly, not an angle
   (REHAB24-6's cam18/profile view was found to have far worse MediaPipe
   tracking fidelity and rep-detection reliability than its front view
   -- see `results/review3_summary.md` table 1/2 -- front view is the
   only view this project's live pipeline is validated against).
-- Frame the shot so the **full upper body and both arms stay in frame**
-  for the entire range of motion, including at the top of the
-  repetition (a raised arm leaving the frame is a common framing
-  mistake with a chest-height camera at 2 m -- check this on a live
-  preview before recording, not just on the first frame).
+- Frame the shot with **head to hips in frame** and **hands inside the
+  frame at the top of each rep** (a raised arm leaving the frame is a
+  common framing mistake -- check this on a live preview before
+  recording, not just on the first frame).
 - **Plain background** (no patterned wallpaper, no clutter behind the
   subject) and a **shirt/sleeve colour that contrasts with the wall**
   behind them -- both reduce the chance MediaPipe's segmentation
@@ -33,10 +32,12 @@ subjects or cameras the way the REHAB24-6 work had to.
 
 ## Video settings
 
-- **1080p** (1920x1080), **30 fps**. Matches the frame rate every
-  timing-based threshold in this project (tempo_min_s/tempo_max_s,
-  tol_tempo_frac) was derived and tested against; a different fps
-  would need those thresholds re-validated, not just re-measured.
+- Record at the **live app's resolution (currently 640x480 at ~30
+  fps)**; don't request other resolutions. ~30 fps matches the frame
+  rate every timing-based threshold in this project (tempo_min_s/
+  tempo_max_s, tol_tempo_frac) was derived and tested against; a
+  different fps would need those thresholds re-validated, not just
+  re-measured.
 
 ## Per-clip metadata
 
@@ -46,7 +47,7 @@ want more than those two columns) covering:
 
 - **camera**: make/model or device used.
 - **distance**: measured distance from camera to subject (should be
-  ~2 m per clip; note any clip that deviates and by how much).
+  2-2.5 m per clip; note any clip that deviates and by how much).
 - **lighting**: brief description (e.g. "overhead fluorescent," "window
   light, overcast," "lamp only") -- lighting changes between clips are
   a common unannounced confound in pose-estimation fidelity.
