@@ -260,8 +260,11 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
         if visible:
             parallel["elbow"].append(elbow_val)
             parallel["trunk"].append(trunk_val)
+            if t is not None:
+                parallel.setdefault("frame_t", []).append(t)
 
     if event == "rep_complete":
+        payload["frame_t"] = list(parallel.get("frame_t", []))
         payload["elbow_angle_deg"] = list(parallel["elbow"])
         payload["trunk_lean_deg"] = list(parallel["trunk"])
         payload["valid_fraction"] = (
@@ -278,6 +281,7 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
         parallel["trunk"].clear()
         parallel["total_frames"] = 0
         parallel["elbow_wrist_visible_frames"] = 0
+        parallel["frame_t"] = []
 
     return event, payload, visible, failed
 

@@ -147,7 +147,7 @@ def one_sided_deviation(feature: str, measured: dict, ref_medians: dict) -> floa
     raise ValueError(f"Unknown feature {feature!r}")
 
 
-def derive_tolerances(calibration_reps: list[dict], reference_medians: dict) -> dict:
+def derive_tolerances(calibration_reps: list[dict], reference_medians: dict, elbow_statistic: str = "min") -> dict:
     """calibration_reps: a list of rep dicts, each {"angle_deg": [...],
     "elbow_angle_deg": [...], "trunk_lean_deg": [...], "fps": float} (one
     per detected calibration rep; fps is that rep's own clip's fps, since
@@ -158,7 +158,7 @@ def derive_tolerances(calibration_reps: list[dict], reference_medians: dict) -> 
     """
     deviations = {"peak_angle": [], "elbow_min": [], "trunk_max": [], "tempo_s": []}
     for rep in calibration_reps:
-        feat = rules_module.rep_summary_features(rep, rep["fps"])
+        feat = rules_module.rep_summary_features(rep, rep["fps"], elbow_statistic)
         for key in deviations:
             deviations[key].append(one_sided_deviation(key, feat, reference_medians))
     n = len(calibration_reps)
@@ -281,7 +281,7 @@ def process_clip_reps(video_path: Path, exercise: str) -> tuple[list[dict], floa
             detected_reps.append({
                 "angle_deg": payload["angle_deg"], "elbow_angle_deg": payload["elbow_angle_deg"],
                 "trunk_lean_deg": payload["trunk_lean_deg"], "valid_fraction": payload["valid_fraction"],
-                "fps": clip_fps,
+                "fps": clip_fps, "frame_t": payload["frame_t"],
             })
         n_frames += 1
     elapsed = time.perf_counter() - start_t
@@ -310,13 +310,17 @@ def main() -> None:
         print("No role=reference clip in the manifest -- cannot build a Reference. Nothing to evaluate.")
         return
 
+    demo_config = json.loads(DEMO_CONFIG_PATH.read_text())
+    statistic = rules_module.elbow_statistic(demo_config)
+    print(f"Elbow statistic: {statistic}")
+
     print(f"\n[1/3] Building reference from {reference_rows[0]['clip']}...")
     ref_detected, reference_fps, _processing_fps = process_clip_reps(Path(reference_rows[0]["clip"]), EXERCISE)
     if len(ref_detected) < N_REFERENCE_REPS:
         print(f"Only {len(ref_detected)} reps detected in the reference clip -- need >= {N_REFERENCE_REPS}. Aborting.")
         return
     reference_reps = ref_detected[:N_REFERENCE_REPS]
-    reference = rules_module.build_reference("own_clips", EXERCISE, reference_reps, reference_fps)
+    reference = rules_module.build_reference("own_clips", EXERCISE, reference_reps, reference_fps, statistic)
     print(f"  Reference medians: {reference['medians']}")
 
     print(f"\n[2/3] Deriving tolerances from {len(calibration_rows)} calibration clip(s)...")
@@ -324,14 +328,13 @@ def main() -> None:
     for row in calibration_rows:
         detected, _clip_fps, _processing_fps = process_clip_reps(Path(row["clip"]), EXERCISE)
         calibration_reps.extend(detected)
-    tolerances = derive_tolerances(calibration_reps, reference["medians"])
+    tolerances = derive_tolerances(calibration_reps, reference["medians"], statistic)
     print(f"  n calibration reps: {tolerances['n']}  tolerances: {tolerances}")
     if tolerances["n"] < MIN_N_WARNING:
         print(f"  WARNING: n={tolerances['n']} < {MIN_N_WARNING} -- these tolerances are derived from very few reps.")
 
-    demo_config = json.loads(DEMO_CONFIG_PATH.read_text())
     reference_config = {
-        "exercise": EXERCISE, "mode": "reference_relative",
+        "exercise": EXERCISE, "mode": "reference_relative", "elbow_statistic": statistic,
         "derived_from": "own recorded calibration clip(s)",
         "n_calibration_reps": tolerances["n"], "date": today, "commit": commit,
         "tol_peak_deg": {"value": tolerances["tol_peak_deg"], "status": "derived"},

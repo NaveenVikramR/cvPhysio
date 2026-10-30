@@ -33,6 +33,13 @@ DEFAULT_REFERENCE_K = 3
 
 RULE_IDS = ["peak_angle", "elbow_straight", "trunk_lean", "tempo"]
 
+# config["elbow_statistic"]: what elbow_straight measures per rep. "min" (the
+# default, also when the key is absent) is the worst gated frame anywhere in
+# the rep. "hold_median" is the median around the peak: steadier against a
+# one-frame glitch, but blind to a bend outside the hold window.
+ELBOW_STATISTICS = ("min", "hold_median")
+HOLD_WINDOW_S = 0.3
+
 # Which joint roles each rule's underlying feature depends on -- the
 # single source of truth for what the confidence gate must check before
 # a frame is trusted for scoring. feature_extraction.check_confidence()
@@ -65,6 +72,33 @@ def load_config(exercise: str) -> dict:
             f"can use --scorer rules."
         )
     return json.loads(path.read_text())
+
+
+def elbow_statistic(config: dict) -> str:
+    """The per-rep elbow statistic this config selects (default "min")."""
+    statistic = config.get("elbow_statistic", "min")
+    if statistic not in ELBOW_STATISTICS:
+        raise ValueError(f"elbow_statistic={statistic!r}; must be one of {ELBOW_STATISTICS}")
+    return statistic
+
+
+def hold_window_elbow(rep: dict, fps: float) -> float:
+    """Median elbow angle over the rep's gated frames within HOLD_WINDOW_S of
+    its peak shoulder angle. Times come from rep["frame_t"] when present,
+    because gated-out frames leave gaps; otherwise frame index / fps."""
+    angle = rep["angle_deg"]
+    elbow = rep["elbow_angle_deg"]
+    frame_t = rep.get("frame_t")
+    times = frame_t if frame_t and len(frame_t) == len(angle) else [i / fps for i in range(len(angle))]
+    peak_t = times[max(range(len(angle)), key=angle.__getitem__)]
+    # Small slack so a frame exactly on the window's edge isn't lost to float rounding.
+    return statistics.median(e for e, t in zip(elbow, times) if abs(t - peak_t) <= HOLD_WINDOW_S + 1e-9)
+
+
+def rep_elbow_value(rep: dict, fps: float, statistic: str = "min") -> float:
+    if statistic == "hold_median":
+        return hold_window_elbow(rep, fps)
+    return min(rep["elbow_angle_deg"])
 
 
 def active_scoring_mode(config: dict, reference: dict | None) -> str:
@@ -157,19 +191,23 @@ def score_rep(rep: dict, config: dict, fps: float, reference: dict | None = None
     min_valid_fraction = _value(config, "min_valid_fraction")
     mode = config.get("mode", "absolute")
 
+    statistic = elbow_statistic(config)
     warning = None
     if mode == "reference_relative" and reference is not None:
         bounds = _reference_relative_bounds(config, reference)
+        if reference.get("elbow_statistic", "min") != statistic:
+            warning = (f"Reference elbow value was built with {reference.get('elbow_statistic', 'min')!r} but this "
+                       f"config scores with {statistic!r} -- re-record the reference.")
     else:
         if mode == "reference_relative" and reference is None:
             warning = "reference_relative mode requested but no reference was supplied -- falling back to absolute thresholds."
         bounds = _absolute_bounds(config)
 
     peak = max(angle)
-    worst_elbow = min(elbow)
+    elbow_value = rep_elbow_value(rep, fps, statistic)
     worst_trunk = max(trunk)
     duration_s = len(angle) / fps
-    measured = {"peak_angle": peak, "elbow_straight": worst_elbow, "trunk_lean": worst_trunk, "tempo": duration_s}
+    measured = {"peak_angle": peak, "elbow_straight": elbow_value, "trunk_lean": worst_trunk, "tempo": duration_s}
 
     rules = {
         rule_id: {
@@ -199,17 +237,18 @@ def score_rep(rep: dict, config: dict, fps: float, reference: dict | None = None
 # used by "reference_relative" mode above.
 # ---------------------------------------------------------------------------
 
-def rep_summary_features(rep: dict, fps: float) -> dict:
+def rep_summary_features(rep: dict, fps: float, statistic: str = "min") -> dict:
     """peak_angle/elbow_min/trunk_max/tempo_s for one rep -- the same
     per-rep aggregates score_rep() computes internally, exposed here so
-    a Reference can be built from K real reps' own measurements."""
+    a Reference can be built from K real reps' own measurements. The
+    "elbow_min" key holds whichever elbow statistic was asked for."""
     return {
-        "peak_angle": max(rep["angle_deg"]), "elbow_min": min(rep["elbow_angle_deg"]),
+        "peak_angle": max(rep["angle_deg"]), "elbow_min": rep_elbow_value(rep, fps, statistic),
         "trunk_max": max(rep["trunk_lean_deg"]), "tempo_s": len(rep["angle_deg"]) / fps,
     }
 
 
-def build_reference(name: str, exercise: str, reps: list[dict], fps: float) -> dict:
+def build_reference(name: str, exercise: str, reps: list[dict], fps: float, statistic: str = "min") -> dict:
     """Median of rep_summary_features() over `reps` (K repetitions --
     e.g. captured once at the start of a patient's session, or a
     therapist's own demonstration). A rep carrying its own "fps" is timed
@@ -218,14 +257,14 @@ def build_reference(name: str, exercise: str, reps: list[dict], fps: float) -> d
     one rep to be meaningful."""
     if not reps:
         raise ValueError("build_reference() needs at least one rep")
-    summaries = [rep_summary_features(rep, rep.get("fps", fps)) for rep in reps]
+    summaries = [rep_summary_features(rep, rep.get("fps", fps), statistic) for rep in reps]
     medians = {
         col: float(statistics.median(s[col] for s in summaries))
         for col in ("peak_angle", "elbow_min", "trunk_max", "tempo_s")
     }
     return {
         "name": name, "exercise": exercise, "k_reps": len(reps),
-        "created": datetime.now(timezone.utc).isoformat(), "medians": medians,
+        "created": datetime.now(timezone.utc).isoformat(), "medians": medians, "elbow_statistic": statistic,
     }
 
 

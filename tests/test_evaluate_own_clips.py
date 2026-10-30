@@ -369,9 +369,9 @@ def test_main_times_reference_calibration_and_eval_at_each_clips_own_fps(tmp_pat
     build_reference_fps, score_fps = [], []
     real_build, real_score = rules_module.build_reference, rules_module.score_rep
 
-    def spy_build(name, exercise, reps, fps):
+    def spy_build(name, exercise, reps, fps, *args):
         build_reference_fps.append(fps)
-        return real_build(name, exercise, reps, fps)
+        return real_build(name, exercise, reps, fps, *args)
 
     def spy_score(rep, config, fps, reference=None):
         score_fps.append(fps)

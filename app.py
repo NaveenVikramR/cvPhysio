@@ -152,6 +152,7 @@ def run_headless(video_path: str, exercise: str, scorer: str, span: tuple[int, i
                     "elbow_angle_deg": payload["elbow_angle_deg"],
                     "trunk_lean_deg": payload["trunk_lean_deg"],
                     "valid_fraction": payload["valid_fraction"],
+                    "frame_t": payload["frame_t"],
                 }
                 result = rules_module.score_rep(rep, config, fps, reference=reference)
                 print(f"Rep {rep_count}: {result['status'].upper()}  failed_rules={result['failed_rules']}  "
@@ -386,6 +387,7 @@ if __name__ == "__main__":
                                 "elbow_angle_deg": payload["elbow_angle_deg"],
                                 "trunk_lean_deg": payload["trunk_lean_deg"],
                                 "valid_fraction": payload["valid_fraction"],
+                                "frame_t": payload["frame_t"],
                             }
                             result = rules_module.score_rep(rep, rules_config, live_rep_fps(payload, fps), reference=reference)
                             last_rule_results = result["rules"]
@@ -597,7 +599,7 @@ if __name__ == "__main__":
                         collected_reps.append({
                             "angle_deg": payload["angle_deg"], "elbow_angle_deg": payload["elbow_angle_deg"],
                             "trunk_lean_deg": payload["trunk_lean_deg"],
-                            "fps": live_rep_fps(payload, fps),
+                            "fps": live_rep_fps(payload, fps), "frame_t": payload["frame_t"],
                         })
                         if PLAIN_UI:
                             status_slot.write(f"Captured rep {len(collected_reps)}/{k_reps}")
@@ -633,7 +635,10 @@ if __name__ == "__main__":
 
             if len(collected_reps) >= k_reps:
                 st.session_state.recording_reference = False
-                reference = rules_module.build_reference(reference_name, exercise, collected_reps, fps)
+                reference = rules_module.build_reference(
+                    reference_name, exercise, collected_reps, fps,
+                    rules_module.elbow_statistic(rules_config) if rules_config else "min",
+                )
                 saved_path = rules_module.save_reference(reference)
                 st.success(f"Saved reference '{reference_name}' ({len(collected_reps)} reps) to {saved_path}")
                 st.json(reference["medians"])
