@@ -33,6 +33,7 @@ SCRIPT_MODULES = [
     "scripts.evaluate_oracle_ceiling",
     "scripts.build_review3_summary",
     "scripts.evaluate_own_clips",
+    "scripts.check_environment",
     "scripts.evaluate_rules",
     "scripts.measure_smoothing_effect",
     "scripts.rotation_proxy_experiment",
@@ -51,6 +52,24 @@ def test_app_imports_without_parsing_argv_or_launching_anything():
     assert hasattr(app, "parse_args")
     assert hasattr(app, "run_headless")
     assert not hasattr(app, "ARGS")  # only set inside `if __name__ == "__main__":`
+
+
+def test_ui_preview_imports_without_mediapipe_or_camera():
+    """ui_preview.py has no __main__ guard (Streamlit scripts run their
+    whole body when launched via `streamlit run`), but importing it as
+    an ordinary module must still succeed, and its own source must
+    never mention mediapipe or VideoCapture/open_webcam -- checked
+    against source text, not sys.modules, since other test modules in
+    the same pytest run legitimately import mediapipe-dependent code
+    first (see tests/test_ui_preview.py for the full AppTest-driven
+    per-state render check)."""
+    import inspect
+    import ui_preview
+    assert hasattr(ui_preview, "STATE_PRESETS")
+    source = inspect.getsource(ui_preview)
+    assert "mediapipe" not in source
+    assert "VideoCapture" not in source
+    assert "open_webcam" not in source
 
 
 def test_pipeline_importable_standalone():

@@ -27,7 +27,14 @@ python -m venv .venv
 
 pip install --upgrade pip
 pip install -r requirements.txt
-pip install pytest              # NOT in requirements.txt -- needed to run the test suite
+```
+
+To also run the test suite / `scripts/check_environment.py`, install the
+dev extras instead (pytest is NOT in `requirements.txt` itself -- it's
+only needed for development, not to run the app):
+
+```
+pip install -r requirements-dev.txt
 ```
 
 ## 3. Download the MediaPipe pose-landmarker model (gitignored, required)
@@ -47,11 +54,17 @@ URL in a browser and save it to `models\pose_landmarker_lite.task`.)
 
 ```
 python -m pytest -q
+python scripts/check_environment.py
 ```
 
-Should report all tests passing with no collection errors (a
+`pytest` should report all tests passing with no collection errors (a
 collection error naming `pose_landmarker_lite.task` means step 3
-didn't complete).
+didn't complete). `check_environment.py` is a one-shot sanity check
+(Python version, every `requirements.txt` package's installed version,
+the model file, cameras at indices 0-2 with resolution/fps, one real
+pose-model inference, and text-to-speech) -- it prints a PASS/FAIL/WARN
+line with a one-line fix for anything that isn't PASS, and exits
+non-zero if anything FAILs.
 
 ## 5. Run the app
 

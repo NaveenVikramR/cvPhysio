@@ -34,9 +34,16 @@ class DiscardRecord:
 
 
 class SessionTracker:
-    def __init__(self, user_id: str, exercise: str):
+    def __init__(self, user_id: str, exercise: str, camera_info: dict | None = None):
+        """camera_info, if given: {"width": int, "height": int, "fps":
+        float} -- the resolution/fps the live webcam actually reported
+        (cv2.VideoCapture.get(), after opening it), not a configured or
+        assumed value. None (the default) for any caller that doesn't
+        have a live camera (e.g. a future headless/video-file tracker),
+        kept out of summary() entirely in that case."""
         self.user_id = user_id
         self.exercise = exercise
+        self.camera_info = camera_info
         self.started_at = datetime.now(timezone.utc)
         self.reps: list[RepRecord] = []
         self.discards: list[DiscardRecord] = []
@@ -53,7 +60,7 @@ class SessionTracker:
         failed = sum(1 for r in self.reps if r.status == RuleStatus.FAIL)
         insufficient = sum(1 for r in self.reps if r.status == RuleStatus.INSUFFICIENT_DATA)
         scored = passed + failed
-        return {
+        result = {
             "user_id": self.user_id,
             "exercise": self.exercise,
             "total_reps": total,
@@ -64,6 +71,9 @@ class SessionTracker:
             "insufficient_data_rate_pct": round(100 * insufficient / total, 1) if total else None,
             "discarded_segments": len(self.discards),
         }
+        if self.camera_info is not None:
+            result["camera"] = self.camera_info
+        return result
 
     def save(self, logs_dir: Path | str = LOGS_DIR) -> Path:
         logs_dir = Path(logs_dir)
