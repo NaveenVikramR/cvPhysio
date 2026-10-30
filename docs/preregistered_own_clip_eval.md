@@ -122,6 +122,10 @@ columns of its per-rep output (`results/own_clips_eval.csv`), ignoring
 `elbow_straight`. Its own all-rule false-fail figures are still reported, labelled
 as not primary.
 
+`scripts/compute_primary_outcomes.py` computes them from that file, with Wilson 95%
+intervals, and applies the thresholds and inconclusive rules above. It isn't a pinned
+file. It was committed before any eval clip was recorded.
+
 ### Rationale
 
 Measured on REHAB24-6, front view, against mocap:
