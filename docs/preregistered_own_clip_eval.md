@@ -157,3 +157,59 @@ any frozen evaluation. The laptop data comes from one person, so this is a desig
 decision, not an accuracy claim. Dropping a rule from the verdict makes passing
 easier, so a pass under this amendment says nothing about whether the scorer can
 detect a bent elbow.
+
+## Amendment 2 (2026-10-30)
+
+Appended after the first run. Where this section differs from the text above, this
+section applies. The frozen files, thresholds and Amendment 1's outcomes are unchanged.
+
+### First run: INCONCLUSIVE
+
+The evaluator ran once, on commit `5e8c0646971f695bf0a4bacfcff129fe863712e8` with a clean
+tree. It stopped at the reference clip with 2 reps detected, where at least 3 are
+needed, which is inconclusive under the rules above. The arms were raised at the start
+of that clip, so the detector took an arms-up baseline and counted the arms-down
+periods as reps.
+
+- The evaluator opened no eval clip, and no rule scores were computed.
+- `scripts/compute_primary_outcomes.py` was not run, because no per-rep CSV existed.
+- Before that run, an integrity check opened every clip, including the eval clips, to
+  read frame counts and decode the first and last frames. It used no pose model or scoring.
+- After that run, the reference clip alone went through the pose model and rep detector
+  to find the cause, viewing shoulder angles and rep events. No rule was scored.
+- The seven clips and the manifest are kept in `data/recordings/discarded_run1/`
+  (gitignored) and are not used again. All seven clips are re-recorded.
+
+### New recording rules
+
+- Arms down for 2 s before and after each clip, within the recording.
+- Each clip ends by its `--seconds` limit, not by pressing `q`.
+- Real lighting and clothing are filled in on every clip's notes.
+
+### Quality control
+
+`scripts/qc_clip.py` checks every clip before the evaluator runs. It uses the pose model
+and rep detector only, never rule outcomes, and prints no peak, elbow, trunk or tempo
+value. A clip must pass all three:
+
+| Check | Passes when |
+|---|---|
+| Arms down | Every measured shoulder angle in the first 1.5 s and the last 1.5 s is below 45 deg, and each window has at least one measured frame |
+| Rep count | Detected reps equal the planned count |
+| Tracking | No `lost_tracking` discard, and no run of frames failing the visibility gate longer than the detector's tolerance (10 frames) |
+
+A clip failing QC is re-recorded under the same rule for all clips. The first take that
+passes QC is used, and later takes aren't recorded. A failed take is renamed with a
+`spare_` prefix and its manifest row removed, because the evaluator reads only the manifest.
+The number of failed takes per clip and the failing check are reported with the results.
+
+### Limitations
+
+- **Detector baseline:** the rep detector takes its rest baseline from the first frames it
+  sees (15 frames, about 0.5 s), with no check that the arms are down. If they're raised
+  there, it inverts rep detection without any error. This was not changed, because the
+  detector isn't part of this amendment. The recorder's preview warning and the QC check
+  reduce the risk for these clips only; live sessions still have this weakness.
+- **QC selects takes:** it keeps only takes whose reps the detector can count. A fault
+  movement the detector can't segment, such as a very brief rep, is re-recorded and not
+  counted as missed, so the results apply only to reps the detector segmented.
