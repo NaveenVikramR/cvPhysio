@@ -70,6 +70,24 @@ def test_frame_reading_uses_each_arms_own_joints_and_the_scorers_side():
     assert result["right"]["wrist_vis"] == 0.6
 
 
+def test_tag_selects_its_own_file_and_no_tag_keeps_the_default():
+    assert men.results_path(None) == men.RESULTS_PATH
+    assert men.RESULTS_PATH.name == "elbow_noise.json"
+    assert men.results_path("rod") == men.RESULTS_PATH.with_name("elbow_noise_rod.json")
+    assert men.results_path("rod") != men.results_path("free")
+
+
+def test_tag_argument_is_parsed_and_defaults_to_none():
+    assert men.parse_args([]).tag is None
+    assert men.parse_args(["--tag", "rod-1_a"]).tag == "rod-1_a"
+
+
+@pytest.mark.parametrize("tag", ["../escape", "a/b", "a b", "a.json", ""])
+def test_tag_that_could_leave_the_results_folder_is_refused(tag):
+    with pytest.raises(SystemExit):
+        men.parse_args(["--tag", tag])
+
+
 def test_format_summary_marks_an_empty_arm():
     frames = [{"pose": "arm_out", "t": 0.0, "reading": None}, frame("arm_down")]
     text = "\n".join(men.format_summary(men.summarize_session(frames)))

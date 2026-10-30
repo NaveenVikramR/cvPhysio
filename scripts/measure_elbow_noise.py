@@ -12,14 +12,16 @@ Prints mean, std, p5, p95 and the fraction of frames below 135 deg per pose,
 for each arm and for the arm the scorer would select. Statistics use frames
 where that arm's elbow and wrist both pass the visibility gate; the gate pass
 rate is reported beside them. Per-frame readings and the summary go to
-results/elbow_noise.json (gitignored), overwriting any earlier run. No video
-is stored and nothing uses the network.
+results/elbow_noise_<tag>.json with --tag, otherwise results/elbow_noise.json
+(gitignored). A repeated tag overwrites that tag's file. No video is stored and
+nothing uses the network.
 
 This describes one person in one setup. It isn't a threshold derivation.
 """
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -111,13 +113,20 @@ def git_provenance() -> tuple[str, bool]:
         return "unknown", True
 
 
+def results_path(tag: str | None) -> Path:
+    return RESULTS_PATH.with_name(f"elbow_noise_{tag}.json") if tag else RESULTS_PATH
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Measure elbow-angle noise on held straight-arm poses.")
     parser.add_argument("--camera", type=int, default=0)
     parser.add_argument("--seconds", type=float, default=10.0, help="how long to hold EACH pose")
+    parser.add_argument("--tag", default=None, help="save to results/elbow_noise_<tag>.json (letters, digits, _ and - only)")
     args = parser.parse_args(argv)
     if args.seconds <= 0:
         parser.error("--seconds must be positive")
+    if args.tag is not None and not re.fullmatch(r"[A-Za-z0-9_-]+", args.tag):
+        parser.error("--tag may only contain letters, digits, _ and -")
     return args
 
 
@@ -172,9 +181,11 @@ def main(argv: list[str] | None = None) -> int:
 
     summary = summarize_session(frames)
     commit, dirty = git_provenance()
-    RESULTS_PATH.parent.mkdir(exist_ok=True)
-    RESULTS_PATH.write_text(json.dumps({
+    output_path = results_path(args.tag)
+    output_path.parent.mkdir(exist_ok=True)
+    output_path.write_text(json.dumps({
         "commit": commit, "dirty": dirty, "date": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "tag": args.tag,
         "camera_index": args.camera, "resolution": resolution, "landmark_space": landmark_space,
         "pose_model": pose_estimation.configured_pose_model(), "seconds_per_pose": args.seconds,
         "measured_fps_per_pose": pose_times, "elbow_threshold_deg": ELBOW_THRESHOLD_DEG,
@@ -182,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     }, indent=1) + "\n")
     print("\n".join(format_summary(summary)))
     print(f"\nMeasured fps per pose: { {k: round(v, 1) for k, v in pose_times.items()} }")
-    print(f"Saved {RESULTS_PATH.relative_to(REPO_ROOT)}")
+    print(f"Saved {output_path.relative_to(REPO_ROOT)}")
     return 0
 
 
