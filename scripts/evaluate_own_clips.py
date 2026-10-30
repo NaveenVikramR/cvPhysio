@@ -261,6 +261,7 @@ def process_clip_reps(video_path: Path, exercise: str) -> tuple[list[dict], floa
         raise RuntimeError(f"Could not open video: {video_path}")
     clip_fps, fps_source = resolve_clip_fps(video_path, cap)
     print(f"  {video_path}: clip fps used = {clip_fps:.3f} (from {fps_source})")
+    pose_estimation.reset_tracking()  # a clip's reps mustn't depend on the clip before it
     required_roles = rules_module.required_joint_roles()
     session = Session(exercise)
     session.start()

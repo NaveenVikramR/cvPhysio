@@ -5,11 +5,12 @@ evaluate_own_clips.py:
 
     python scripts/qc_all.py
 
-Pose tracking carries over between clips in one process, so a clip's rep count can
-differ between running alone and running after other clips. This script runs both:
+The evaluator and scripts/qc_clip.py both reset pose tracking at the start of each clip
+(Amendment 4), so a clip's rep count shouldn't depend on the clip before it. This
+script confirms that by running both ways:
   1. Each clip alone, in its own process, as scripts/qc_clip.py does.
-  2. All clips in one process with one pose-model instance, in the evaluator's order:
-     the first reference row, then calibration rows, then eval rows, in manifest order.
+  2. All clips in one process, in the evaluator's order: the first reference row, then
+     calibration rows, then eval rows, in manifest order.
 
 It prints detected/planned for each. "OK to score" needs the planned set of clips, all
 three checks passing in the combined run, and matching counts in both runs. Otherwise

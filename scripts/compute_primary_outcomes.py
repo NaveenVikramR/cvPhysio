@@ -46,7 +46,7 @@ PINNED_BLOBS = {
     "config/exercises/shoulder_abduction.json": "79c406f505c73c2ea87671b3773ea81e99e16848",
     "config/pose.json": "c15ab25f8d524734c300a45fcde8285c82ea4411",
     "src/rules.py": "4e85c2b701f86b952e71a4106022739fa41ce8d0",
-    "scripts/evaluate_own_clips.py": "09f2715fbb7bb986d654dac3e28042f81cb3bf54",
+    "scripts/evaluate_own_clips.py": "4382f70f5012da8ed6a8630ddcaa121e4f0617e2",  # Amendment 4
 }
 REQUIRED_COLUMNS = {"clip", "intended", "demo_status", "demo_failed_rules", "reference_status", "reference_failed_rules"}
 

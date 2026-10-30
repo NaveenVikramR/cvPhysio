@@ -89,6 +89,17 @@ _landmarker = create_landmarker(_POSE_MODEL)
 
 _next_timestamp_ms = 0
 
+
+def reset_tracking() -> None:
+    """Starts a fresh pose-model instance, so the next frame has no tracking state
+    from earlier frames. For offline runs over several clips, where a clip's results
+    would otherwise depend on which clip came before it."""
+    global _landmarker, _next_timestamp_ms
+    _landmarker.close()
+    _landmarker = create_landmarker(_POSE_MODEL)
+    _next_timestamp_ms = 0
+
+
 LANDMARK_SPACES = ("world", "normalized")
 
 

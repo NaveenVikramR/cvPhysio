@@ -320,3 +320,46 @@ holds exactly the planned clips, runs each clip alone, then runs all of them in 
 in the evaluator's order, and prints detected and planned reps for each. The evaluator is
 not run if a clip fails in the combined run, or if any clip's rep count differs between the
 two runs. It uses the pose model and rep detector only and scores no rule.
+
+## Amendment 4 (2026-10-31)
+
+Appended before any rule was scored on the seven clips used. Where this section differs from
+the text above, this section applies. Thresholds, rules, pose settings and Amendment 1's
+outcomes are unchanged.
+
+### What happened
+
+`scripts/qc_all.py` printed DO NOT SCORE: `abd_eval_correct_01` was detected with 6 reps alone
+and 7 when run after other clips in one process, with its planned count being 6. The other
+six clips agreed. As Amendment 3 requires, the evaluator was not run.
+
+### Change
+
+Pose tracking carried over between clips in one process, so a clip's detected reps depended
+partly on the clip before it. `scripts/evaluate_own_clips.py` now resets pose tracking at the
+start of each clip, using a new `reset_tracking()` in `src/pose_estimation.py`.
+`scripts/qc_clip.py` does the same. The clips, manifest and recordings are unchanged, and no
+clip was re-recorded for this.
+
+This changes one pinned file:
+
+| Item | Was | Now |
+|---|---|---|
+| Evaluator, `scripts/evaluate_own_clips.py` | blob `09f2715fbb7bb986d654dac3e28042f81cb3bf54` | blob `4382f70f5012da8ed6a8630ddcaa121e4f0617e2` |
+
+The other three pins are unchanged. `PINNED_BLOBS` in `scripts/compute_primary_outcomes.py`
+holds the new evaluator id.
+
+### Disclosure
+
+This change was made after seeing that QC result, to resolve it. Only detected rep counts and
+QC check results were seen for this clip. No rule score, peak, elbow, trunk or tempo value
+from any of the seven clips was viewed. Re-recording or reordering clips until the check passed
+was rejected.
+
+With the change in the working tree and not yet committed, `scripts/qc_all.py` was run once to
+test it. All seven clips passed, with matching counts, including `abd_eval_correct_01` at 6 in
+both runs. It is run once more on the committed code before the evaluator, and the evaluator
+isn't run unless that run also prints OK to score.
+
+The reset applies to offline runs only. A live session keeps tracking from frame to frame.

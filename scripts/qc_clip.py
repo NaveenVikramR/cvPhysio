@@ -46,6 +46,7 @@ def collect_detector_trace(video_path: Path) -> dict:
     if not cap.isOpened():
         raise RuntimeError(f"Could not open video: {video_path}")
     fps, _source = resolve_clip_fps(video_path, cap)
+    pose_estimation.reset_tracking()  # as the evaluator does for each clip
     required_roles = rules_module.required_joint_roles()  # the gate's joints; no rule is evaluated
     session = Session(EXERCISE)
     session.start()
