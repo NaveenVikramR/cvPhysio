@@ -52,6 +52,19 @@ def rep_start_timestamp(duration_s: float | None, now: datetime | None = None) -
     return ((now or datetime.now(timezone.utc)) - timedelta(seconds=duration_s)).isoformat()
 
 
+def rep_trace(rep: dict, fps: float, duration_s: float | None) -> dict:
+    """One rep's gated per-frame series, as scored, so any statistic can be
+    re-computed offline (see scripts/rescore_session.py). frame_t is seconds
+    since the rep's first gated frame; fps is the one the rep was scored with."""
+    frame_t = rep.get("frame_t") or []
+    return {
+        "fps": fps, "duration_s": duration_s, "valid_fraction": rep["valid_fraction"],
+        "frame_t": [t - frame_t[0] for t in frame_t],
+        "angle_deg": list(rep["angle_deg"]), "elbow_angle_deg": list(rep["elbow_angle_deg"]),
+        "trunk_lean_deg": list(rep["trunk_lean_deg"]),
+    }
+
+
 class SessionTracker:
     def __init__(self, user_id: str, exercise: str, camera_info: dict | None = None):
         """camera_info, if given: {"width": int, "height": int, "fps":
@@ -66,9 +79,12 @@ class SessionTracker:
         self.started_at = datetime.now(timezone.utc)
         self.reps: list[RepRecord] = []
         self.discards: list[DiscardRecord] = []
+        self.rep_traces: list[dict] = []
 
-    def add_rep(self, rep: RepRecord) -> None:
+    def add_rep(self, rep: RepRecord, trace: dict | None = None) -> None:
         self.reps.append(rep)
+        if trace is not None:
+            self.rep_traces.append({"rep": len(self.reps), **trace})
 
     def add_discard(self, discard: DiscardRecord) -> None:
         self.discards.append(discard)
@@ -116,6 +132,10 @@ class SessionTracker:
                 writer.writeheader()
                 for discard in self.discards:
                     writer.writerow(asdict(discard))
+        if self.rep_traces:
+            path.with_suffix(".traces.json").write_text(json.dumps({
+                "user_id": self.user_id, "exercise": self.exercise, "reps": self.rep_traces,
+            }))
         summary_path = path.with_suffix(".summary.json")
         summary_path.write_text(json.dumps(self.summary(), indent=2))
         return path

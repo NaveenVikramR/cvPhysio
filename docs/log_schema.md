@@ -55,6 +55,24 @@ ever produced by `--video` runs**, only by interactive webcam sessions.
 Same asymmetry applies to the session CSV: `run_headless()` has no
 `SessionTracker` at all.
 
+## `.traces.json` (sibling to the session CSV, rules scorer only)
+
+Written only if at least one rep has a trace, so older sessions, classifier
+sessions and zero-rep sessions have none. Holds `user_id`, `exercise` and
+`reps`, a list with one object per scored rep. Read by
+`scripts/rescore_session.py`.
+
+| Key | Type | Unit | Meaning |
+|---|---|---|---|
+| `rep` | int | — | 1-based rep number, matching the session CSV's row order |
+| `fps` | float | frames/s | the fps the rep was scored with (`live_rep_fps()`) |
+| `duration_s` | float or `null` | seconds | the rep's measured duration |
+| `valid_fraction` | float | fraction `[0,1]` | same as the CSV column |
+| `frame_t` | list[float] | seconds | each gated frame's time since the rep's first gated frame |
+| `angle_deg` | list[float] | degrees | per-frame shoulder angle, gated frames only |
+| `elbow_angle_deg` | list[float] | degrees | per-frame elbow angle, gated frames only |
+| `trunk_lean_deg` | list[float] | degrees | per-frame trunk lean, gated frames only |
+
 ## `.summary.json` (sibling to the session CSV, always written)
 
 Not itself a CSV, but produced by the same `SessionTracker.save()`

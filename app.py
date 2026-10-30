@@ -32,7 +32,7 @@ from src.pipeline import (
 )
 from src.pose_estimation import get_pose_landmarks, open_webcam
 from src.statuses import RuleStatus
-from src.tracking import DiscardRecord, RepRecord, SessionTracker, rep_start_timestamp, load_history
+from src.tracking import DiscardRecord, RepRecord, SessionTracker, rep_start_timestamp, rep_trace, load_history
 
 CLASSIFIER_WARNING = (
     "WARNING: --scorer classifier was trained on UI-PRMD Kinect recordings, "
@@ -389,7 +389,8 @@ if __name__ == "__main__":
                                 "valid_fraction": payload["valid_fraction"],
                                 "frame_t": payload["frame_t"],
                             }
-                            result = rules_module.score_rep(rep, rules_config, live_rep_fps(payload, fps), reference=reference)
+                            rep_fps = live_rep_fps(payload, fps)
+                            result = rules_module.score_rep(rep, rules_config, rep_fps, reference=reference)
                             last_rule_results = result["rules"]
                             side_value = Counter(payload["side"]).most_common(1)[0][0]
                             tracker.add_rep(RepRecord(
@@ -408,7 +409,7 @@ if __name__ == "__main__":
                                 elbow_wrist_visible_fraction=payload["elbow_wrist_visible_fraction"],
                                 n_valid_frames=len(rep["angle_deg"]),
                                 rep_start_timestamp=rep_start_timestamp(payload["duration_s"]),
-                            ))
+                            ), trace=rep_trace(rep, rep_fps, payload["duration_s"]))
                             last_message = f"Rep {rep_count}: {message_for_rules_result(result)}"
                             if result["warning"]:
                                 st.warning(result["warning"])
