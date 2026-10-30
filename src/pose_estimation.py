@@ -40,7 +40,18 @@ from mediapipe.tasks.python import BaseOptions
 from mediapipe.tasks.python.vision import PoseLandmarker, PoseLandmarkerOptions, RunningMode
 
 _MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "pose_landmarker_lite.task"
+_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
+    "pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
+)
 CONFIG_PATH = Path("config/pose.json")
+
+if not _MODEL_PATH.exists():
+    raise FileNotFoundError(
+        f"Missing pose-landmarker model bundle at {_MODEL_PATH}. "
+        f"Download it from {_MODEL_URL} and save it to that exact path "
+        f"(~5.8MB; gitignored, not committed -- see docs/laptop_setup.md)."
+    )
 
 _landmarker = PoseLandmarker.create_from_options(PoseLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=str(_MODEL_PATH)),
