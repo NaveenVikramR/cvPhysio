@@ -17,7 +17,8 @@ logs/*
 !logs/.gitkeep
 scripts/output/
 scratch/
-.streamlit/
+.streamlit/*
+!.streamlit/config.toml
 data/clips_manifest.csv
 data/own_manifest.csv
 results/

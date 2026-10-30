@@ -1,0 +1,20 @@
+# Base theming for the cvPhysio UI (src/ui_theme.py handles everything
+# this engine can't: glass cards, pills, glow ring, serif headings).
+# Streamlit's own [theme] keys below are what drive its native widgets
+# (buttons, inputs, selectboxes) so they match the dark design language
+# even with CVPHYSIO_PLAIN_UI=1 (custom CSS off).
+
+[theme]
+base = "dark"
+primaryColor = "#0297DE"
+backgroundColor = "#02070A"
+secondaryBackgroundColor = "#04152E"
+textColor = "#FFFFFF"
+font = "sans serif"
+
+[browser]
+# No video/frame data is sent anywhere by this app (verified before
+# adding this file -- see docs/laptop_setup.md) -- also turn off
+# Streamlit's own anonymous usage telemetry so that stays true of the
+# framework itself, not just this project's own code.
+gatherUsageStats = false
