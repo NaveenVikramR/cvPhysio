@@ -18,6 +18,16 @@ that was then scored). From `RepRecord` in `src/tracking.py`.
 | `status` | string | — | `"pass"`, `"fail"`, or `"insufficient_data"` (rules scorer, from `score_rep()`'s `status`), or `"pass"`/`"fail"` only (classifier scorer, mapped from `result["is_correct"]` — the classifier never produces `insufficient_data`). Not validated as an enum at the dataclass level. |
 | `confidence` | float or empty | probability `[0,1]` | **classifier scorer**: `result["confidence"]` (max class probability from the RandomForest). **rules scorer**: always `None` (written as an empty CSV field) — the rule scorer has no notion of confidence. |
 | `timestamp` | string | ISO-8601 UTC | `datetime.now(timezone.utc).isoformat()`, captured at `RepRecord` construction time (i.e. when the rep was scored, not when it started). |
+| `elbow_min_deg` | float or empty | degrees | **rules scorer**: what `elbow_straight` measured (the rep's smallest gated elbow angle). Empty for the classifier scorer, as are all the columns below. |
+| `trunk_max_deg` | float or empty | degrees | what `trunk_lean` measured (the rep's largest gated trunk lean). |
+| `tempo_s` | float or empty | seconds | what the `tempo` rule measured. |
+| `failed_rules` | string or empty | — | `;`-joined rule ids that failed. Empty on a pass; can be non-empty on `insufficient_data`. |
+| `scoring_mode` | string or empty | — | the mode actually applied, `"absolute"` or `"reference_relative"` (`src.rules.active_scoring_mode()`). |
+| `reference_name` | string or empty | — | the reference selected for the session. Selected isn't the same as applied: check `scoring_mode`. |
+| `valid_fraction` | float or empty | fraction `[0,1]` | frames of the rep's span that passed the whole confidence gate. |
+| `elbow_wrist_visible_fraction` | float or empty | fraction `[0,1]` | frames of the rep's span where the selected side's elbow and wrist both had visibility >= 0.5. |
+| `n_valid_frames` | int or empty | count | gated frames in the rep. |
+| `rep_start_timestamp` | string or empty | ISO-8601 UTC | when the rep started. |
 
 If a session has zero completed reps, `self.reps` is empty and
 `SessionTracker.save()` still opens the CSV path and writes it with an
@@ -61,3 +71,4 @@ call, from `SessionTracker.summary()`:
 | `accuracy_pct` | float or `null` | percent | `100 * passed / (passed + failed)`, rounded to 1 decimal; `null` if `passed + failed == 0` (i.e. every rep was `insufficient_data`, or there were no reps) |
 | `insufficient_data_rate_pct` | float or `null` | percent | `100 * insufficient / total_reps`; `null` if `total_reps == 0` |
 | `discarded_segments` | int | count | `len(self.discards)` |
+| `camera` | object | — | live sessions only: `width`, `height` and `fps` as the camera reported them, plus `measured_loop_fps`, the rate the frame loop really achieved. |

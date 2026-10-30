@@ -67,6 +67,14 @@ def load_config(exercise: str) -> dict:
     return json.loads(path.read_text())
 
 
+def active_scoring_mode(config: dict, reference: dict | None) -> str:
+    """The mode score_rep() actually applies: a reference only takes effect
+    when the config itself is in reference_relative mode."""
+    if config.get("mode", "absolute") == "reference_relative" and reference is not None:
+        return "reference_relative"
+    return "absolute"
+
+
 def _value(config: dict, key: str) -> float:
     return config[key]["value"]
 

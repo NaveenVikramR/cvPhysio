@@ -22,6 +22,7 @@ from pathlib import Path
 from src import smoothing as smoothing_module
 from src.classifier import FEATURE_COLUMNS, CorrectnessClassifier
 from src.feature_extraction import (
+    MIN_VISIBILITY,
     check_confidence,
     compute_elbow_angle,
     compute_trunk_lean_deg,
@@ -197,7 +198,10 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
     "total_frames": int}, mutated in place; on "rep_complete" the aligned
     sequences and valid_fraction (valid/total frames over the rep's whole
     span, including ones the confidence gate rejected) are added to the
-    returned payload.
+    returned payload, along with elbow_wrist_visible_fraction (the share of
+    the rep's span where both landmarks elbow_straight depends on, on the
+    selected side, cleared the visibility gate). Older callers' `parallel`
+    dicts without the optional keys used below still work.
 
     `smoother`, if given (src.smoothing.LandmarkSmoother), runs between
     pose and features: raw landmarks in, smoothed (or held-over, or None
@@ -220,8 +224,11 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
 
     visible, failed, features = False, [], None
     elbow_val = trunk_val = None
+    elbow_wrist_visible = False
     if landmarks is not None:
-        visible, failed = check_confidence(landmarks, select_side(landmarks), exercise, required_roles)
+        side_joints = select_side(landmarks)
+        elbow_wrist_visible = all(landmarks[side_joints[role]][3] >= MIN_VISIBILITY for role in ("elbow", "wrist"))
+        visible, failed = check_confidence(landmarks, side_joints, exercise, required_roles)
         features = extract_features(landmarks, exercise) if visible else None
         elbow_val = compute_elbow_angle(landmarks)
         trunk_val = compute_trunk_lean_deg(landmarks)
@@ -246,6 +253,7 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
     in_rep_span = prev_state == "MOVING" or (prev_state == "RESTING" and new_state == "MOVING")
     if in_rep_span:
         parallel["total_frames"] += 1
+        parallel["elbow_wrist_visible_frames"] = parallel.get("elbow_wrist_visible_frames", 0) + elbow_wrist_visible
         if visible:
             parallel["elbow"].append(elbow_val)
             parallel["trunk"].append(trunk_val)
@@ -256,11 +264,15 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
         payload["valid_fraction"] = (
             len(parallel["elbow"]) / parallel["total_frames"] if parallel["total_frames"] else 0.0
         )
+        payload["elbow_wrist_visible_fraction"] = (
+            parallel.get("elbow_wrist_visible_frames", 0) / parallel["total_frames"] if parallel["total_frames"] else 0.0
+        )
 
     if prev_state == "MOVING" and new_state == "RESTING":
         parallel["elbow"].clear()
         parallel["trunk"].clear()
         parallel["total_frames"] = 0
+        parallel["elbow_wrist_visible_frames"] = 0
 
     return event, payload, visible, failed
 

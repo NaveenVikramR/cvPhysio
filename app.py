@@ -357,6 +357,7 @@ if __name__ == "__main__":
             last_rule_results = None  # most recent rep's result["rules"], for the per-rule chips
             session_start_t = time.monotonic()  # presentation only: drives the Tempo/FPS stats below
             frame_count = 0
+            loop_frames = 0
             last_ring_state = None  # only re-render the ring's <style> override on an actual state change
             try:
                 while st.session_state.running:
@@ -364,6 +365,7 @@ if __name__ == "__main__":
                     if not ok:
                         st.error("Could not read from camera.")
                         break
+                    loop_frames += 1
 
                     landmarks = get_pose_landmarks(frame)
                     t = time.monotonic()  # live webcam: real arrival time, not an assumed fixed rate
@@ -387,6 +389,15 @@ if __name__ == "__main__":
                                 angle_deg=max(rep["angle_deg"]),
                                 status=result["status"],
                                 confidence=None,
+                                elbow_min_deg=result["rules"]["elbow_straight"]["measured"],
+                                trunk_max_deg=result["rules"]["trunk_lean"]["measured"],
+                                tempo_s=result["rules"]["tempo"]["measured"],
+                                failed_rules=";".join(result["failed_rules"]),
+                                scoring_mode=rules_module.active_scoring_mode(rules_config, reference),
+                                reference_name=reference["name"] if reference else None,
+                                valid_fraction=payload["valid_fraction"],
+                                elbow_wrist_visible_fraction=payload["elbow_wrist_visible_fraction"],
+                                n_valid_frames=len(rep["angle_deg"]),
                             ))
                             last_message = f"Rep {rep_count}: {message_for_rules_result(result)}"
                             if result["warning"]:
@@ -508,6 +519,9 @@ if __name__ == "__main__":
                 # on session.detector, which is about to go out of scope, so it's discarded by construction,
                 # never scored, never written anywhere.
                 capture.release()
+                loop_elapsed = time.monotonic() - session_start_t
+                if loop_frames and loop_elapsed > 0:
+                    camera_info["measured_loop_fps"] = round(loop_frames / loop_elapsed, 2)  # what the frame loop really achieved
                 tracker.save()  # always, even a totally empty session -- writes a header-only CSV, never a 0-byte file
                 st.json(tracker.summary())
 

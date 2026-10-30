@@ -21,6 +21,18 @@ class RepRecord:
     status: str  # one of RuleStatus's values (classifier scorer only ever produces PASS/FAIL)
     confidence: float | None
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    # Rules-scorer diagnostics: what each rule actually measured, so a session
+    # can be reviewed from its CSV alone. None for the classifier scorer.
+    elbow_min_deg: float | None = None
+    trunk_max_deg: float | None = None
+    tempo_s: float | None = None
+    failed_rules: str | None = None  # ";"-joined rule ids, as they failed
+    scoring_mode: str | None = None  # the mode actually applied (src.rules.active_scoring_mode)
+    reference_name: str | None = None  # the selected reference, whether or not it was applied
+    valid_fraction: float | None = None
+    elbow_wrist_visible_fraction: float | None = None
+    n_valid_frames: int | None = None
+    rep_start_timestamp: str | None = None
 
 
 @dataclass
