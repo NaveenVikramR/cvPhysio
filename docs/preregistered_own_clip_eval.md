@@ -90,3 +90,58 @@ lower bound near 44%. A pass supports continuing with these settings for this
 person and setup. It isn't evidence of accuracy across people, and it isn't
 clinical validation. The thresholds remain provisional until a licensed
 physiotherapist reviews them.
+
+## Amendment 1 (2026-10-30)
+
+Made before any frozen evaluation: `scripts/evaluate_own_clips.py` hasn't been
+run on real clips. Where this section differs from the text above, this section
+applies. Everything else above still stands, including the frozen thresholds and
+the inconclusive-run rules.
+
+### Changes
+
+- `elbow_straight` is reported as advisory only. It is excluded from the
+  pass/fail verdict (FORM).
+- Primary outcomes, replacing criteria 1 and 2:
+
+| Outcome | Rules counted | Threshold | With the planned reps |
+|---|---|---|---|
+| False-fail rate on correct eval reps | `peak_angle`, `trunk_lean`, `tempo` | at most 20% | at most 1 of 6 |
+| Arm-too-low fault (`fault_lowarm`) detected by its expected rule | `peak_angle` | at least 70% | 3 of 3 |
+| Trunk-lean fault (`fault_trunk`) detected by its expected rule | `trunk_lean` | at least 70% | 3 of 3 |
+| Too-fast fault (`fault_fast`) detected by its expected rule | `tempo` | at least 70% | 3 of 3 |
+
+- The bent-elbow fault (`fault_elbow`, expected rule `elbow_straight`) is a
+  secondary exploratory outcome with no pass criterion. Its result is reported
+  whatever it shows.
+
+### How the outcomes are computed
+
+The frozen evaluator is unchanged. These outcomes come from the failed-rule
+columns of its per-rep output (`results/own_clips_eval.csv`), ignoring
+`elbow_straight`. Its own all-rule false-fail figures are still reported, labelled
+as not primary.
+
+### Rationale
+
+Measured on REHAB24-6, front view, against mocap:
+
+- 3D world elbow angle: slope 0.298, and bias -15.25 deg on straight arms (mocap
+  above 160 deg).
+- World x,y elbow angle compared with 3D: MAE 8.39 vs 13.09 deg, but r 0.469 vs 0.647.
+
+Measured on the laptop with one person:
+
+- Held straight arm reads about 143-145 deg, with single-frame minima of 122-124 deg
+  (run `free2`). An earlier run in the same setup (`free`) read about 96 deg on the
+  left arm, and that wasn't repeated, so held-pose readings aren't fully stable.
+- A/B sessions (5 bent, 15 straight reps) showed no separation of bent from straight
+  under `min`, `p10` or `hold_median` (AUC 0.64, 0.47 and 0.37).
+
+### Disclosure
+
+This decision was made after viewing the exploratory A/B and noise data, but before
+any frozen evaluation. The laptop data comes from one person, so this is a design
+decision, not an accuracy claim. Dropping a rule from the verdict makes passing
+easier, so a pass under this amendment says nothing about whether the scorer can
+detect a bent elbow.
