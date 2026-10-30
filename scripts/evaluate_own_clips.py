@@ -26,8 +26,11 @@ Metrics (Wilson 95% CI on every rate): false-fail rate on correct
 eval reps; per fault type, the share flagged by ANY rule and by the
 EXPECTED rule (fault_lowarm->peak_angle, fault_trunk->trunk_lean,
 fault_elbow->elbow_straight, fault_fast->tempo); which rules fire
-wrongly on correct reps; insufficient_data rate; average FPS across
-eval clips.
+wrongly on correct reps; insufficient_data rate; average processing
+speed across eval clips.
+
+Every rep timing uses the clip's own fps (resolve_clip_fps()), printed
+for each clip -- never processing speed, which only reflects this machine.
 
 Output: results/own_clips_eval.md and results/own_clips_eval.csv
 (one row per scored rep), both starting with commit hash, dirty flag,
@@ -35,7 +38,7 @@ landmark_space, config paths, manifest hash, and date.
 
 IMPORTANT: this script's main() requires real recorded video files
 listed in data/own_manifest.csv (role=reference/calibration/eval) --
-it was built and unit-tested on synthetic/placeholder data only (see
+it was built and tested on synthetic data with pose stubbed out (see
 tests/test_evaluate_own_clips.py), and has deliberately NOT been run
 against data/own_manifest.csv's own EXAMPLE_ placeholder rows, which
 point at video files that do not exist.
@@ -109,7 +112,7 @@ def read_manifest(path: Path) -> list[dict]:
 
 # ---------------------------------------------------------------------------
 # Pure, synthetic-data-testable logic (no video, no MediaPipe below this line
-# until process_clip_reps())
+# until resolve_clip_fps())
 # ---------------------------------------------------------------------------
 
 def wilson_interval(k: int, n: int, z: float = 1.959963984540054) -> tuple[float, float]:
@@ -144,16 +147,18 @@ def one_sided_deviation(feature: str, measured: dict, ref_medians: dict) -> floa
     raise ValueError(f"Unknown feature {feature!r}")
 
 
-def derive_tolerances(calibration_reps: list[dict], fps: float, reference_medians: dict) -> dict:
+def derive_tolerances(calibration_reps: list[dict], reference_medians: dict) -> dict:
     """calibration_reps: a list of rep dicts, each {"angle_deg": [...],
-    "elbow_angle_deg": [...], "trunk_lean_deg": [...]} (one per detected
-    calibration rep). Returns {"tol_peak_deg", "tol_elbow_deg",
-    "tol_trunk_deg", "tol_tempo_frac", "n"} -- p95 of the one-sided
-    deviation from reference_medians, pooled over all calibration_reps.
+    "elbow_angle_deg": [...], "trunk_lean_deg": [...], "fps": float} (one
+    per detected calibration rep; fps is that rep's own clip's fps, since
+    calibration clips needn't share one). Returns {"tol_peak_deg",
+    "tol_elbow_deg", "tol_trunk_deg", "tol_tempo_frac", "n"} -- p95 of the
+    one-sided deviation from reference_medians, pooled over all
+    calibration_reps.
     """
     deviations = {"peak_angle": [], "elbow_min": [], "trunk_max": [], "tempo_s": []}
     for rep in calibration_reps:
-        feat = rules_module.rep_summary_features(rep, fps)
+        feat = rules_module.rep_summary_features(rep, rep["fps"])
         for key in deviations:
             deviations[key].append(one_sided_deviation(key, feat, reference_medians))
     n = len(calibration_reps)
@@ -216,26 +221,46 @@ def insufficient_data_rate(all_results: list[dict]) -> tuple[int, int]:
 
 
 # ---------------------------------------------------------------------------
-# Video-processing glue -- real MediaPipe, real video decode. NOT exercised
-# by this script's own tests (see module docstring); only called from
-# main(), which this task's instructions say not to run yet.
+# Video-processing glue -- real video decode, MediaPipe via pose_estimation.
+# Tests run these with pose stubbed out; real MediaPipe on a real clip has
+# not been run (see module docstring).
 # ---------------------------------------------------------------------------
 
-def process_clip_reps(video_path: Path, exercise: str) -> tuple[list[dict], float]:
+def resolve_clip_fps(video_path: Path, cap) -> tuple[float, str]:
+    """(fps, source) for timing this clip's reps: the measured_fps in the
+    sidecar scripts/record_clip.py writes next to it, else the video's
+    CAP_PROP_FPS. Raises if neither is usable -- a guessed fps would
+    silently skew every tempo measured from this clip."""
+    sidecar_path = video_path.with_suffix(".json")
+    try:
+        fps = json.loads(sidecar_path.read_text())["measured_fps"]
+        if isinstance(fps, (int, float)) and fps > 0:
+            return float(fps), "sidecar"
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps > 0:
+        return fps, "video"
+    raise RuntimeError(f"No usable fps for {video_path}: no valid sidecar and CAP_PROP_FPS={fps}")
+
+
+def process_clip_reps(video_path: Path, exercise: str) -> tuple[list[dict], float, float]:
     """Runs the WHOLE clip through Session+RepDetector exactly once
     (Start before frame 0, never Stop -- the same default app.py's
-    run_headless() uses with no --span). Returns (detected_reps,
-    fps_measured): detected_reps is a list of {"angle_deg",
-    "elbow_angle_deg", "trunk_lean_deg", "valid_fraction"} dicts, one
-    per rep_complete event, in detection order; fps_measured is frames
-    processed / wall-clock seconds (the same live-throughput
-    measurement scripts/benchmark_rehab24.py's part_e_fps uses -- a
-    real decode+inference speed, deliberately not a cached figure).
+    run_headless() uses with no --span). Returns (detected_reps, clip_fps,
+    processing_fps): detected_reps is a list of {"angle_deg",
+    "elbow_angle_deg", "trunk_lean_deg", "valid_fraction", "fps"} dicts,
+    one per rep_complete event, in detection order. clip_fps (see
+    resolve_clip_fps()) is what every rep timing must use. processing_fps
+    is frames processed / wall-clock seconds (the same live-throughput
+    measurement scripts/benchmark_rehab24.py's part_e_fps uses) -- a
+    machine-speed figure for reporting only, never for timing a rep.
     """
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise RuntimeError(f"Could not open video: {video_path}")
-    fps_meta = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    clip_fps, fps_source = resolve_clip_fps(video_path, cap)
+    print(f"  {video_path}: clip fps used = {clip_fps:.3f} (from {fps_source})")
     required_roles = rules_module.required_joint_roles()
     session = Session(exercise)
     session.start()
@@ -248,7 +273,7 @@ def process_clip_reps(video_path: Path, exercise: str) -> tuple[list[dict], floa
         ok, frame = cap.read()
         if not ok:
             break
-        t = frame_idx / fps_meta
+        t = frame_idx / clip_fps
         frame_idx += 1
         landmarks = pose_estimation.get_pose_landmarks(frame)
         event, payload, _visible, _failed = session.process_frame(landmarks, smoother, t, required_roles)
@@ -256,12 +281,13 @@ def process_clip_reps(video_path: Path, exercise: str) -> tuple[list[dict], floa
             detected_reps.append({
                 "angle_deg": payload["angle_deg"], "elbow_angle_deg": payload["elbow_angle_deg"],
                 "trunk_lean_deg": payload["trunk_lean_deg"], "valid_fraction": payload["valid_fraction"],
+                "fps": clip_fps,
             })
         n_frames += 1
     elapsed = time.perf_counter() - start_t
     cap.release()
-    fps_measured = n_frames / elapsed if elapsed > 0 else float("nan")
-    return detected_reps, fps_measured
+    processing_fps = n_frames / elapsed if elapsed > 0 else float("nan")
+    return detected_reps, clip_fps, processing_fps
 
 
 def main() -> None:
@@ -285,21 +311,20 @@ def main() -> None:
         return
 
     print(f"\n[1/3] Building reference from {reference_rows[0]['clip']}...")
-    ref_detected, _fps = process_clip_reps(Path(reference_rows[0]["clip"]), EXERCISE)
+    ref_detected, reference_fps, _processing_fps = process_clip_reps(Path(reference_rows[0]["clip"]), EXERCISE)
     if len(ref_detected) < N_REFERENCE_REPS:
         print(f"Only {len(ref_detected)} reps detected in the reference clip -- need >= {N_REFERENCE_REPS}. Aborting.")
         return
     reference_reps = ref_detected[:N_REFERENCE_REPS]
-    fps_for_reference = 30.0  # overwritten below once we have a real fps reading
-    reference = rules_module.build_reference("own_clips", EXERCISE, reference_reps, fps_for_reference)
+    reference = rules_module.build_reference("own_clips", EXERCISE, reference_reps, reference_fps)
     print(f"  Reference medians: {reference['medians']}")
 
     print(f"\n[2/3] Deriving tolerances from {len(calibration_rows)} calibration clip(s)...")
     calibration_reps = []
     for row in calibration_rows:
-        detected, _fps = process_clip_reps(Path(row["clip"]), EXERCISE)
+        detected, _clip_fps, _processing_fps = process_clip_reps(Path(row["clip"]), EXERCISE)
         calibration_reps.extend(detected)
-    tolerances = derive_tolerances(calibration_reps, fps_for_reference, reference["medians"])
+    tolerances = derive_tolerances(calibration_reps, reference["medians"])
     print(f"  n calibration reps: {tolerances['n']}  tolerances: {tolerances}")
     if tolerances["n"] < MIN_N_WARNING:
         print(f"  WARNING: n={tolerances['n']} < {MIN_N_WARNING} -- these tolerances are derived from very few reps.")
@@ -325,21 +350,21 @@ def main() -> None:
     csv_rows = []
     per_clip_summary = []
     demo_by_intended, reference_by_intended = {}, {}
-    fps_measurements = []
+    processing_fps_values = []
     for row in eval_rows:
         video_path = Path(row["clip"])
-        detected_reps, fps_measured = process_clip_reps(video_path, EXERCISE)
-        fps_measurements.append(fps_measured)
+        detected_reps, clip_fps, processing_fps = process_clip_reps(video_path, EXERCISE)
+        processing_fps_values.append(processing_fps)
         expected_reps = int(row["expected_reps"])
         rc = rep_count_metrics(len(detected_reps), expected_reps)
         per_clip_summary.append({"clip": row["clip"], "intended": row["intended"], **rc})
         print(f"  {row['clip']} (intended={row['intended']}): detected={rc['detected']} "
-              f"expected={rc['expected']} exact_match={rc['exact_match']} fps={fps_measured:.1f}")
+              f"expected={rc['expected']} exact_match={rc['exact_match']} "
+              f"clip_fps={clip_fps:.3f} processing_fps={processing_fps:.1f}")
 
         for rep_idx, rep in enumerate(detected_reps, 1):
-            fps_rep = fps_measured if fps_measured and fps_measured > 0 else 30.0
-            demo_result = rules_module.score_rep(rep, demo_config, fps_rep)
-            reference_result = rules_module.score_rep(rep, reference_config, fps_rep, reference=reference)
+            demo_result = rules_module.score_rep(rep, demo_config, clip_fps)
+            reference_result = rules_module.score_rep(rep, reference_config, clip_fps, reference=reference)
             demo_by_intended.setdefault(row["intended"], []).append(demo_result)
             reference_by_intended.setdefault(row["intended"], []).append(reference_result)
             csv_rows.append({
@@ -349,7 +374,7 @@ def main() -> None:
                 "reference_failed_rules": ";".join(reference_result["failed_rules"]),
             })
 
-    avg_fps = float(np.mean(fps_measurements)) if fps_measurements else float("nan")
+    avg_processing_fps = float(np.mean(processing_fps_values)) if processing_fps_values else float("nan")
 
     def mode_report(by_intended: dict) -> list[str]:
         lines = []
@@ -381,7 +406,7 @@ def main() -> None:
         lines.append(f"| {s['clip']} | {s['intended']} | {s['detected']} | {s['expected']} | "
                       f"{s['exact_match']} | {s['within_1']} | {s['signed_error']:+d} |")
 
-    lines.append(f"\n## Average FPS across eval clips: {avg_fps:.1f}\n")
+    lines.append(f"\n## Average processing speed across eval clips: {avg_processing_fps:.1f} frames/s\n")
 
     lines.append("\n## Demo config (absolute)\n")
     lines.extend(mode_report(demo_by_intended))

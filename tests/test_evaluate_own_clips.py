@@ -1,15 +1,19 @@
-"""Tests for scripts/evaluate_own_clips.py's manifest parser and pure
-metrics functions, on SYNTHETIC/placeholder data only -- no real video,
-no MediaPipe. process_clip_reps() and main() (the only functions that
-touch real video files) are NOT exercised here or anywhere else in this
-session: this script's harness was built and tested on synthetic rows
-only, per the task that introduced it.
+"""Tests for scripts/evaluate_own_clips.py on SYNTHETIC data only: manifest
+parser and pure metrics functions, plus clip timing on small generated mp4s
+with MediaPipe stubbed out (the frame's brightness says where the arm is).
+No real recording or real pose inference is exercised here.
 """
 
+import json
+import time
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 
+from scripts import evaluate_own_clips as eoc
+from src import rules as rules_module
 from scripts.evaluate_own_clips import (
     derive_tolerances,
     fault_detection_rates,
@@ -135,11 +139,11 @@ def test_one_sided_deviation_raises_on_unknown_feature():
 
 # --- derive_tolerances ----------------------------------------------------
 
-def make_synthetic_rep(peak=100.0, elbow=150.0, trunk=10.0, n_frames=90):
+def make_synthetic_rep(peak=100.0, elbow=150.0, trunk=10.0, n_frames=90, fps=30.0):
     angle = [0.0] + [peak] * n_frames + [0.0]
     elbow_seq = [elbow] * len(angle)
     trunk_seq = [trunk] * len(angle)
-    return {"angle_deg": angle, "elbow_angle_deg": elbow_seq, "trunk_lean_deg": trunk_seq}
+    return {"angle_deg": angle, "elbow_angle_deg": elbow_seq, "trunk_lean_deg": trunk_seq, "fps": fps}
 
 
 def test_derive_tolerances_on_synthetic_reps():
@@ -148,14 +152,23 @@ def test_derive_tolerances_on_synthetic_reps():
         make_synthetic_rep(peak=90.0, elbow=145.0, trunk=15.0, n_frames=88),   # tempo 3.0s
         make_synthetic_rep(peak=85.0, elbow=140.0, trunk=20.0, n_frames=88),
     ]
-    result = derive_tolerances(reps, fps=30.0, reference_medians=reference_medians)
+    result = derive_tolerances(reps, reference_medians=reference_medians)
     assert result["n"] == 2
     assert result["tol_peak_deg"] >= 10.0  # p95 of [10, 15] deviations is close to 15
     assert result["tol_trunk_deg"] >= 5.0
 
 
+def test_derive_tolerances_times_each_rep_at_its_own_clips_fps():
+    reference_medians = {"peak_angle": 100.0, "elbow_min": 150.0, "trunk_max": 10.0, "tempo_s": 3.0}
+    reps = [
+        make_synthetic_rep(n_frames=88, fps=30.0),  # 90 frames / 30 fps = 3.0 s
+        make_synthetic_rep(n_frames=43, fps=15.0),  # 45 frames / 15 fps = 3.0 s
+    ]
+    assert derive_tolerances(reps, reference_medians)["tol_tempo_frac"] == pytest.approx(0.0)
+
+
 def test_derive_tolerances_empty_reps_returns_n_zero_and_none_tolerances():
-    result = derive_tolerances([], fps=30.0, reference_medians={"peak_angle": 1, "elbow_min": 1, "trunk_max": 1, "tempo_s": 1})
+    result = derive_tolerances([], reference_medians={"peak_angle": 1, "elbow_min": 1, "trunk_max": 1, "tempo_s": 1})
     assert result["n"] == 0
     assert result["tol_peak_deg"] is None
 
@@ -234,3 +247,143 @@ def test_insufficient_data_rate():
     all_results = [result("pass"), result("fail"), result("insufficient_data"), result("insufficient_data")]
     k, n = insufficient_data_rate(all_results)
     assert (k, n) == (2, 4)
+
+
+# --- clip fps and rep timing, on generated clips ---------------------------
+
+REST_S = 2.0
+REP_S = 2.0  # a whole number of frames at every fps tested
+N_REPS = 2
+
+
+def write_clip(path, fps, sidecar_fps=None, header_fps=None):
+    """Rest, then N_REPS bright stretches of exactly REP_S seconds at fps.
+    header_fps lets a clip's mp4 header disagree with its real frame rate."""
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), header_fps or fps, (64, 48))
+    assert writer.isOpened()
+    dark, bright = np.zeros((48, 64, 3), np.uint8), np.full((48, 64, 3), 255, np.uint8)
+    for _ in range(N_REPS):
+        for _ in range(round(REST_S * fps)):
+            writer.write(dark)
+        for _ in range(round(REP_S * fps)):
+            writer.write(bright)
+    for _ in range(round(REST_S * fps)):
+        writer.write(dark)
+    writer.release()
+    if sidecar_fps is not None:
+        path.with_suffix(".json").write_text(json.dumps({"measured_fps": sidecar_fps}))
+
+
+def fake_landmarks(frame):
+    """Arm down on a dark frame, out to the side on a bright one."""
+    elbow = (0.3, 0.0, 0.0, 0.9) if frame.mean() > 127 else (0.0, 0.3, 0.0, 0.9)
+    points = [(0.0, 0.0, 0.0, 0.9)] * 33
+    for i, point in {11: (0.0, 0.0, 0.0, 0.9), 12: (-0.3, 0.0, 0.0, 0.9), 13: elbow, 14: (-0.3, 0.3, 0.0, 0.9),
+                     15: (elbow[0] * 2, elbow[1] * 2, 0.0, 0.9), 16: (-0.3, 0.6, 0.0, 0.9),
+                     23: (0.0, 0.5, 0.0, 0.9), 24: (-0.3, 0.5, 0.0, 0.9)}.items():
+        points[i] = point
+    return points
+
+
+@pytest.fixture
+def stub_pose(monkeypatch):
+    monkeypatch.setattr(eoc.pose_estimation, "get_pose_landmarks", fake_landmarks)
+    monkeypatch.setattr(eoc, "build_smoother", lambda: None)
+
+
+@pytest.mark.parametrize("fps", [15.0, 30.0])
+def test_measured_tempo_matches_the_known_duration_at_each_fps(tmp_path, stub_pose, fps):
+    clip = tmp_path / "clip.mp4"
+    write_clip(clip, fps, sidecar_fps=fps)
+    reps, clip_fps, _processing_fps = eoc.process_clip_reps(clip, eoc.EXERCISE)
+    assert clip_fps == fps
+    assert len(reps) == N_REPS
+    for rep in reps:
+        tempo = rules_module.rep_summary_features(rep, rep["fps"])["tempo_s"]
+        # The rep buffer also holds the frame that returns to rest.
+        assert tempo == pytest.approx(REP_S + 1 / fps, abs=1e-9)
+
+
+def test_tempo_does_not_depend_on_processing_speed(tmp_path, stub_pose, monkeypatch):
+    clip = tmp_path / "clip.mp4"
+    write_clip(clip, 30.0, sidecar_fps=30.0)
+    fast = eoc.process_clip_reps(clip, eoc.EXERCISE)
+
+    def slow_landmarks(frame):
+        time.sleep(0.002)
+        return fake_landmarks(frame)
+
+    monkeypatch.setattr(eoc.pose_estimation, "get_pose_landmarks", slow_landmarks)
+    slow = eoc.process_clip_reps(clip, eoc.EXERCISE)
+    assert slow[2] < fast[2]  # genuinely different processing speeds
+    assert slow[1] == fast[1] == 30.0
+
+
+def test_sidecar_fps_wins_over_the_video_header(tmp_path, stub_pose, capsys):
+    clip = tmp_path / "clip.mp4"
+    write_clip(clip, 15.0, sidecar_fps=15.0, header_fps=30.0)
+    reps, clip_fps, _processing_fps = eoc.process_clip_reps(clip, eoc.EXERCISE)
+    assert clip_fps == 15.0
+    assert reps[0]["fps"] == 15.0
+    assert "clip fps used = 15.000 (from sidecar)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("sidecar_text", [None, "not json", "{}", '{"measured_fps": 0}', '{"measured_fps": null}'])
+def test_falls_back_to_the_video_fps_without_a_usable_sidecar(tmp_path, sidecar_text):
+    clip = tmp_path / "clip.mp4"
+    write_clip(clip, 20.0)
+    if sidecar_text is not None:
+        clip.with_suffix(".json").write_text(sidecar_text)
+    cap = cv2.VideoCapture(str(clip))
+    fps, source = eoc.resolve_clip_fps(clip, cap)
+    cap.release()
+    assert fps == pytest.approx(20.0)
+    assert source == "video"
+
+
+def test_no_usable_fps_raises_instead_of_guessing(tmp_path):
+    class NoFps:
+        def get(self, _prop):
+            return 0.0
+
+    with pytest.raises(RuntimeError, match="No usable fps"):
+        eoc.resolve_clip_fps(tmp_path / "clip.mp4", NoFps())
+
+
+def test_main_times_reference_calibration_and_eval_at_each_clips_own_fps(tmp_path, stub_pose, monkeypatch, capsys):
+    clips = {"ref.mp4": 15.0, "cal.mp4": 30.0, "ev.mp4": 20.0}
+    for name, fps in clips.items():
+        write_clip(tmp_path / name, fps, sidecar_fps=fps)
+    # N_REFERENCE_REPS is 3 but each generated clip holds N_REPS.
+    monkeypatch.setattr(eoc, "N_REFERENCE_REPS", N_REPS)
+    manifest = tmp_path / "own_manifest.csv"
+    manifest.write_text(
+        "clip,role,intended,expected_reps,subject,notes\n"
+        f"{(tmp_path / 'ref.mp4').as_posix()},reference,correct,{N_REPS},s,\n"
+        f"{(tmp_path / 'cal.mp4').as_posix()},calibration,correct,{N_REPS},s,\n"
+        f"{(tmp_path / 'ev.mp4').as_posix()},eval,correct,{N_REPS},s,\n"
+    )
+    monkeypatch.setattr(eoc, "MANIFEST_PATH", manifest)
+    monkeypatch.setattr(eoc, "RESULTS_DIR", tmp_path / "results")
+
+    build_reference_fps, score_fps = [], []
+    real_build, real_score = rules_module.build_reference, rules_module.score_rep
+
+    def spy_build(name, exercise, reps, fps):
+        build_reference_fps.append(fps)
+        return real_build(name, exercise, reps, fps)
+
+    def spy_score(rep, config, fps, reference=None):
+        score_fps.append(fps)
+        return real_score(rep, config, fps, reference=reference)
+
+    monkeypatch.setattr(rules_module, "build_reference", spy_build)
+    monkeypatch.setattr(rules_module, "score_rep", spy_score)
+
+    eoc.main()
+
+    assert build_reference_fps == [15.0]
+    assert score_fps == [20.0] * (2 * N_REPS)  # both configs, per eval rep
+    out = capsys.readouterr().out
+    for name, fps in clips.items():
+        assert f"{name}: clip fps used = {fps:.3f} (from sidecar)" in out
