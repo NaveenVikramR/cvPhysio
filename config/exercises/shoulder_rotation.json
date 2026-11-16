@@ -1,0 +1,89 @@
+{
+  "exercise": "shoulder_rotation",
+  "notice": "Thresholds are derived from UI-PRMD Kinect motion capture, not from webcam clips, and are not a clinical judgment. A licensed physiotherapist must review and set appropriate values per patient before this is used for real feedback.",
+  "derived_from": "UI-PRMD movement 9, Kinect FK positions, correct reps, derivation subjects only",
+  "derivation_subjects": [
+    "s01",
+    "s02",
+    "s03",
+    "s04",
+    "s05"
+  ],
+  "held_out_subjects": [
+    "s06",
+    "s07",
+    "s08",
+    "s09",
+    "s10"
+  ],
+  "n_reps": 50,
+  "date": "2026-11-16",
+  "commit": "ae75d9f",
+  "percentiles": {
+    "peak_angle": {
+      "p5": 172.9023912189316,
+      "median": 179.32503145383123,
+      "p95": 179.97129036906952
+    },
+    "elbow_min": {
+      "p5": 80.03217784974863,
+      "median": 92.05315110091436,
+      "p95": 106.88367011772996
+    },
+    "tempo_s": {
+      "p5": 2.066666666666667,
+      "median": 2.533333333333333,
+      "p95": 2.9733333333333327
+    }
+  },
+  "scope_comment": "peak_angle checks only the outward end of the movement (max rotation angle); src/rules.py is pinned and has no rule for the inward end.",
+  "target_peak_deg": {
+    "value": 176.45,
+    "status": "derived",
+    "comment": "band [p5, 180] of peak_angle; p5 of peak_angle over 50 correct UI-PRMD m09 Kinect reps, subjects s01, s02, s03, s04, s05 (scripts/build_rotation_config.py)"
+  },
+  "tolerance_deg": {
+    "value": 3.56,
+    "status": "derived",
+    "comment": "half-width of [p5, 180], +0.01 so 180 itself is inside after rounding"
+  },
+  "min_elbow_straight_deg": {
+    "value": 80.0,
+    "status": "derived",
+    "comment": "Lower bound only: catches the elbow folding more than correct reps do. p5 of elbow_min over 50 correct UI-PRMD m09 Kinect reps, subjects s01, s02, s03, s04, s05 (scripts/build_rotation_config.py)"
+  },
+  "advisory_rules": [
+    "elbow_straight"
+  ],
+  "advisory_rules_comment": "elbow_straight reports but does not count toward pass/fail -- the webcam elbow angle was found unstable (pre-registration Amendment 1).",
+  "max_trunk_lean_deg": {
+    "value": 15,
+    "status": "provisional",
+    "comment": "NOT data-derived: copied from shoulder_abduction.json. Trunk lean cannot be computed on UI-PRMD's Y-up FK positions."
+  },
+  "tempo_min_s": {
+    "value": 1.0,
+    "status": "provisional",
+    "comment": "NOT data-derived: copied from shoulder_abduction.json. A [p5, p95] band of UI-PRMD segment durations was tried first and failed 43/50 held-out correct reps (each subject keeps their own pace; segments also include standing still). That choice was made after seeing held-out results, so the held-out tempo figures are not a clean test."
+  },
+  "tempo_max_s": {
+    "value": 6.0,
+    "status": "provisional",
+    "comment": "NOT data-derived: copied from shoulder_abduction.json. A [p5, p95] band of UI-PRMD segment durations was tried first and failed 43/50 held-out correct reps (each subject keeps their own pace; segments also include standing still). That choice was made after seeing held-out results, so the held-out tempo figures are not a clean test."
+  },
+  "cue_cooldown_s": {
+    "value": 8,
+    "status": "provisional"
+  },
+  "min_valid_fraction": {
+    "value": 0.7,
+    "status": "provisional"
+  },
+  "cues": {
+    "peak_angle": "Rotate your forearm outward through the full range, keeping your elbow at your side.",
+    "elbow_straight": "Keep your elbow bent at about a right angle.",
+    "trunk_lean": "Keep your torso upright -- try not to lean or twist.",
+    "tempo": "Move at a steadier, more controlled pace.",
+    "insufficient_data": "Keep your whole arm, elbow and hand in view."
+  }
+}

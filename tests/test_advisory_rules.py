@@ -44,8 +44,17 @@ def test_without_the_key_the_verdict_is_exactly_score_reps(rep):
     assert result["advisory_failed"] == []
 
 
-def test_no_shipped_config_turns_it_on():
+# Configs allowed to set advisory_rules. shoulder_rotation.json does so on
+# purpose (see scripts/build_rotation_config.py); no abduction config may,
+# because the pre-registered eval demotes elbow_straight in
+# compute_primary_outcomes.py, not through this option.
+ADVISORY_ALLOWED = {"shoulder_rotation.json"}
+
+
+def test_no_shipped_abduction_config_turns_it_on():
     for path in Path("config/exercises").rglob("*.json"):
+        if path.name in ADVISORY_ALLOWED:
+            continue
         assert "advisory_rules" not in json.loads(path.read_text()), path
 
 
