@@ -4,6 +4,19 @@ Everything below was found by reading the code while writing the other
 5 documents. Each item names the exact file/function it comes from so
 it can be checked without re-deriving it.
 
+**Status check, 2026-11-16** (verified against the code at the time; the
+item text below is the original and is not rewritten):
+- Resolved: #5 and #6 (`run_headless()` now prints calibration-stall hints
+  and spoken cues), #7 (`src/feedback.py`'s `message_for_rules_result()` is
+  the single rules-verdict formatter), #8 (`src/statuses.py` enums;
+  `RepRecord`/`DiscardRecord` now reject unknown values), #9 (a header row is
+  always written), #12 (`compute_angle()` returns NaN by design on a
+  zero-length vector, documented in its docstring), #13 (the test suite now
+  covers most modules).
+- Still open: #11 (no rotation rules config). The rest were not re-checked
+  and are on the abduction scoring path, so they wait until the
+  pre-registered own-clip evaluation has run (see `CLAUDE.md`'s freeze rule).
+
 1. **Smoothing runs before the confidence gate, not after.**
    `app.py`'s `process_frame()` calls `smoother.update(landmarks, t)`
    first, then `check_confidence(...)` on the result. If any design

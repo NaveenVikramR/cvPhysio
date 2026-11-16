@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from src.statuses import RuleStatus
+from src.statuses import DiscardReason, RuleStatus
 
 LOGS_DIR = Path("logs")
 
@@ -35,6 +35,12 @@ class RepRecord:
     n_valid_frames: int | None = None
     rep_start_timestamp: str | None = None
 
+    def __post_init__(self) -> None:
+        # Reject a typo'd status (open_questions.md #8) and store the plain
+        # string value, so the CSV is identical whether a caller passed
+        # "pass" or RuleStatus.PASS.
+        self.status = RuleStatus(self.status).value
+
 
 @dataclass
 class DiscardRecord:
@@ -44,6 +50,9 @@ class DiscardRecord:
     reason_code: str
     message: str
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    def __post_init__(self) -> None:
+        self.reason_code = DiscardReason(self.reason_code).value
 
 
 def rep_start_timestamp(duration_s: float | None, now: datetime | None = None) -> str | None:

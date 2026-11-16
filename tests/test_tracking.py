@@ -65,3 +65,46 @@ def test_camera_info_is_written_into_the_summary_json_sidecar(tmp_path):
     assert summary_path.exists()
     saved = json.loads(summary_path.read_text())
     assert saved["camera"] == camera_info
+
+
+# --- open_questions.md #8: status / reason_code are validated --------------
+
+import pytest
+
+from src.statuses import DiscardReason, RuleStatus
+from src.tracking import DiscardRecord as _DiscardRecord, RepRecord as _RepRecord
+
+
+def _rep(status):
+    return _RepRecord(exercise="shoulder_abduction", side="LEFT", angle_deg=90.0, status=status, confidence=None)
+
+
+@pytest.mark.parametrize("status", ["pass", "fail", "insufficient_data"])
+def test_rep_record_accepts_known_status_strings(status):
+    assert _rep(status).status == status
+
+
+def test_rep_record_enum_input_stored_as_plain_string():
+    rec = _rep(RuleStatus.FAIL)
+    assert rec.status == "fail" and type(rec.status) is str
+
+
+@pytest.mark.parametrize("bad", ["PASS", "passed", "", "insufficient"])
+def test_rep_record_rejects_unknown_status(bad):
+    with pytest.raises(ValueError):
+        _rep(bad)
+
+
+def test_discard_record_validates_reason_code():
+    rec = _DiscardRecord(exercise="shoulder_abduction", reason_code=DiscardReason.TOO_SHORT, message="m")
+    assert rec.reason_code == "too_short" and type(rec.reason_code) is str
+    with pytest.raises(ValueError):
+        _DiscardRecord(exercise="shoulder_abduction", reason_code="too-short", message="m")
+
+
+def test_saved_csv_status_column_is_plain_value(tmp_path):
+    from src.tracking import SessionTracker
+    tracker = SessionTracker("u", "shoulder_abduction")
+    tracker.add_rep(_rep(RuleStatus.PASS))
+    text = tracker.save(tmp_path).read_text()
+    assert ",pass," in text and "RuleStatus" not in text
