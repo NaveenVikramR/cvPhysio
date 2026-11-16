@@ -3,7 +3,10 @@
 ## What this is
 Real-time webcam-based rehabilitation coach. Pose estimation → joint angle
 computation → correctness classification → feedback. University semester
-project, Review 2 stage — design is finalized, implementation just starting.
+project. Implementation is well along: all 6 modules exist, with a test suite
+(run `python -m pytest -q`). For current state, active branch and the
+in-progress pre-registered evaluation, see docs/HANDOVER.md and
+docs/preregistered_own_clip_eval.md.
 
 ## Scope (do not expand without asking)
 Exactly two exercises, matching UI-PRMD's official names:
@@ -16,7 +19,8 @@ squats/lunges/leg raises back in.
 ## Architecture (6 modules, do not restructure)
 1. Video Capture & Pose Estimation — src/pose_estimation.py — MediaPipe Pose
 2. Biomechanical Feature Extraction — src/feature_extraction.py — joint angles
-3. Correctness Classification — src/classifier.py — Random Forest on UI-PRMD
+3. Correctness Classification — src/rules.py (live rule scorer, default) and
+   src/classifier.py (Random Forest on UI-PRMD)
 4. Real-Time Feedback Engine — src/feedback.py — visual overlay + TTS
 5. Progress Tracking — src/tracking.py — session logs
 6. UI — app.py — Streamlit
@@ -37,6 +41,12 @@ so say so if the split leaves any subject group very small.
 - Keep modules independent — feature_extraction.py should not import
   anything from classifier.py, etc. Each module's output is the next
   module's only input.
+- Pre-registration freeze: files pinned by blob id in
+  docs/preregistered_own_clip_eval.md (thresholds, pose config, rules.py,
+  evaluator) must not change unless an amendment is logged first. Until the
+  own-clip evaluation has run, also avoid behaviour changes to the rest of
+  the abduction scoring path (pose_estimation, feature_extraction,
+  smoothing, pipeline, statuses), since they change its results too.
 
 ## Stack
 Python, OpenCV, MediaPipe, scikit-learn, pandas, Streamlit, pyttsx3.
