@@ -1,0 +1,16 @@
+{
+  "label": "preregistered-abduction-eval",
+  "machine": "laptop",
+  "packaged_at": "2026-11-17T17:59:22+05:30",
+  "commit": "ce7c3db593369dcdbafbc0930ae23245c18ffea2",
+  "branch": "elbow-accuracy",
+  "dirty": true,
+  "files": [
+    "SOURCE.md",
+    "own_clips_eval_run2_output.txt",
+    "own_clips_eval_output.txt",
+    "own_clips_eval.md",
+    "own_clips_eval.csv",
+    "primary_outcomes.txt"
+  ]
+}

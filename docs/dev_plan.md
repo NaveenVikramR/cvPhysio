@@ -7,12 +7,12 @@ Update the status table when a step finishes. History is in `git log`.
 
 | Step | Status | Where |
 |---|---|---|
-| Phase 0: abduction pre-registered evaluation | **waiting**, laptop only | `docs/HANDOVER.md` "How to resume", step 4 |
+| Phase 0: abduction pre-registered evaluation | done: run 2026-10-31 on the laptop. Demo config FAIL, reference_relative PASS | `docs/preregistered_own_clip_eval.md` "Result" |
 | Phase 1: rotation diagnosis | done | `docs/rotation_diagnosis.md` |
 | F1: landmark-fidelity baseline | done | `docs/landmark_fidelity.md` |
 | Team recording kit | done | `docs/RECORDING_GUIDE.md`, `scripts/record_clip.py`, `scripts/package_results.py` |
 | Stage 1 camera-angle test clips | **next**, recorder (friend) | `docs/RECORDING_GUIDE.md` section 5 |
-| F2 improvements, Phase 2 rotation fixes | blocked on Phase 0 (and Stage 1 for rotation) | below |
+| F2 improvements, Phase 2 rotation fixes | **unblocked** (rotation parts still need Stage 1) | below |
 | Stage 3 team dataset, Phase 3 evaluation | after Stage 1 decides the camera angle | below |
 
 **Change to Phase 3 (2026-11-17):** team recordings now happen *before* the rotation

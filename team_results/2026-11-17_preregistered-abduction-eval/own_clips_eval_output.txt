@@ -1,0 +1,6 @@
+﻿Provenance: commit=5e8c0646971f695bf0a4bacfcff129fe863712e8  dirty=False  landmark_space=world  manifest_hash=da49ed5dcd331ccf  date=2026-10-30
+Elbow statistic: min
+
+[1/3] Building reference from data/recordings/abd_reference_correct_01.mp4...
+  data\recordings\abd_reference_correct_01.mp4: clip fps used = 29.875 (from sidecar)
+Only 2 reps detected in the reference clip -- need >= 3. Aborting.

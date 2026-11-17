@@ -1,0 +1,25 @@
+﻿Provenance: commit=dedd7c31a1437435d50ffd4ef441fd77f5d25df9  dirty=False  landmark_space=world  manifest_hash=f21c289738ca3e72  date=2026-10-31
+Elbow statistic: min
+
+[1/3] Building reference from data/recordings/abd_reference_correct_02.mp4...
+  data\recordings\abd_reference_correct_02.mp4: clip fps used = 30.000 (from sidecar)
+  Reference medians: {'peak_angle': 97.61577324659382, 'elbow_min': 101.33843038273089, 'trunk_max': 8.743686133211684, 'tempo_s': 4.500067965002382}
+
+[2/3] Deriving tolerances from 1 calibration clip(s)...
+  data\recordings\abd_calibration_correct_01.mp4: clip fps used = 29.999 (from sidecar)
+  n calibration reps: 5  tolerances: {'tol_peak_deg': 10.782716070812594, 'tol_elbow_deg': 27.59833896859613, 'tol_trunk_deg': 1.4497616757821075, 'tol_tempo_frac': 0.21480098856820792, 'n': 5}
+  WARNING: n=5 < 30 -- these tolerances are derived from very few reps.
+
+[3/3] Evaluating 5 eval clip(s) against both configs...
+  data\recordings\abd_eval_fault_elbow_01.mp4: clip fps used = 30.001 (from sidecar)
+  data/recordings/abd_eval_fault_elbow_01.mp4 (intended=fault_elbow): detected=3 expected=3 exact_match=True clip_fps=30.001 processing_fps=31.3
+  data\recordings\abd_eval_fault_fast_01.mp4: clip fps used = 30.025 (from sidecar)
+  data/recordings/abd_eval_fault_fast_01.mp4 (intended=fault_fast): detected=3 expected=3 exact_match=True clip_fps=30.025 processing_fps=31.1
+  data\recordings\abd_eval_correct_01.mp4: clip fps used = 30.006 (from sidecar)
+  data/recordings/abd_eval_correct_01.mp4 (intended=correct): detected=6 expected=6 exact_match=True clip_fps=30.006 processing_fps=31.2
+  data\recordings\abd_eval_fault_lowarm_01.mp4: clip fps used = 30.001 (from sidecar)
+  data/recordings/abd_eval_fault_lowarm_01.mp4 (intended=fault_lowarm): detected=3 expected=3 exact_match=True clip_fps=30.001 processing_fps=31.3
+  data\recordings\abd_eval_fault_trunk_02.mp4: clip fps used = 30.018 (from sidecar)
+  data/recordings/abd_eval_fault_trunk_02.mp4 (intended=fault_trunk): detected=3 expected=3 exact_match=True clip_fps=30.018 processing_fps=31.6
+
+Wrote results\own_clips_eval.md and results\own_clips_eval.csv

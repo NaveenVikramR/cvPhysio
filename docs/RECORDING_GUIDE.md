@@ -174,9 +174,8 @@ for Stage 3 and update this guide.
 
 ### Stage 2: the frozen abduction evaluation (only on the laptop that has the 7 original clips)
 
-**Recorder: skip this stage.** It belongs to the developer, on the laptop
-that holds the original clips (`docs/HANDOVER.md`, section "How to
-resume", step 4).
+**Recorder: skip this stage.** It's already done: the evaluation ran on
+2026-10-31 (`docs/preregistered_own_clip_eval.md`, "Result").
 
 ### Stage 3: the full dataset (after Stage 1 is decided)
 

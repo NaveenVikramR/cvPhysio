@@ -1,0 +1,26 @@
+# commit: dedd7c31a1437435d50ffd4ef441fd77f5d25df9
+# dirty: False
+# landmark_space: world
+# demo_config: config\exercises\shoulder_abduction.json
+# reference_config: derived_in_this_run
+# manifest_hash: f21c289738ca3e72
+# date: 2026-10-31
+clip,intended,rep_index,demo_status,demo_failed_rules,reference_status,reference_failed_rules
+data/recordings/abd_eval_fault_elbow_01.mp4,fault_elbow,1,fail,peak_angle;elbow_straight,fail,trunk_lean;tempo
+data/recordings/abd_eval_fault_elbow_01.mp4,fault_elbow,2,fail,peak_angle;elbow_straight,fail,trunk_lean
+data/recordings/abd_eval_fault_elbow_01.mp4,fault_elbow,3,fail,elbow_straight;tempo,fail,tempo
+data/recordings/abd_eval_fault_fast_01.mp4,fault_fast,1,fail,elbow_straight;tempo,fail,tempo
+data/recordings/abd_eval_fault_fast_01.mp4,fault_fast,2,fail,elbow_straight,fail,tempo
+data/recordings/abd_eval_fault_fast_01.mp4,fault_fast,3,fail,elbow_straight;tempo,fail,tempo
+data/recordings/abd_eval_correct_01.mp4,correct,1,fail,elbow_straight,pass,
+data/recordings/abd_eval_correct_01.mp4,correct,2,fail,elbow_straight,pass,
+data/recordings/abd_eval_correct_01.mp4,correct,3,fail,elbow_straight,fail,tempo
+data/recordings/abd_eval_correct_01.mp4,correct,4,fail,elbow_straight,pass,
+data/recordings/abd_eval_correct_01.mp4,correct,5,fail,elbow_straight,pass,
+data/recordings/abd_eval_correct_01.mp4,correct,6,fail,elbow_straight,pass,
+data/recordings/abd_eval_fault_lowarm_01.mp4,fault_lowarm,1,fail,elbow_straight,fail,peak_angle
+data/recordings/abd_eval_fault_lowarm_01.mp4,fault_lowarm,2,fail,elbow_straight,fail,peak_angle;tempo
+data/recordings/abd_eval_fault_lowarm_01.mp4,fault_lowarm,3,fail,elbow_straight,fail,peak_angle;tempo
+data/recordings/abd_eval_fault_trunk_02.mp4,fault_trunk,1,fail,elbow_straight,fail,trunk_lean;tempo
+data/recordings/abd_eval_fault_trunk_02.mp4,fault_trunk,2,fail,elbow_straight,fail,trunk_lean;tempo
+data/recordings/abd_eval_fault_trunk_02.mp4,fault_trunk,3,fail,elbow_straight,fail,trunk_lean

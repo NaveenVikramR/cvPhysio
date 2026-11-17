@@ -1,0 +1,24 @@
+﻿Source: results\own_clips_eval.csv  commit: dedd7c31a1437435d50ffd4ef441fd77f5d25df9  dirty: False  date: 2026-10-31
+Pinned files at that commit: match the pre-registration
+
+=== demo: absolute demo config ===
+False-fail on correct reps (peak, trunk, tempo only; limit 20%): 0/6 (0.0%, 95% CI [0.0%, 39.0%])
+Detection, arm too low (fault_lowarm) by peak_angle (minimum 70%): 0/3 (0.0%, 95% CI [0.0%, 56.1%])
+Detection, trunk lean (fault_trunk) by trunk_lean (minimum 70%): 0/3 (0.0%, 95% CI [0.0%, 56.1%])
+Detection, too fast (fault_fast) by tempo (minimum 70%): 2/3 (66.7%, 95% CI [20.8%, 93.9%])
+Exploratory, no pass criterion: bent elbow (fault_elbow) by elbow_straight: 3/3 (100.0%, 95% CI [43.9%, 100.0%])
+Not primary: false-fail counting every rule, including elbow_straight: 6/6 (100.0%, 95% CI [61.0%, 100.0%])
+insufficient_data reps, excluded above: 0/18 (0.0%, 95% CI [0.0%, 17.6%])
+Verdict: FAIL (fault_lowarm detected 0/3, below 70%; fault_trunk detected 0/3, below 70%; fault_fast detected 2/3, below 70%)
+
+=== reference: derived reference_relative config ===
+False-fail on correct reps (peak, trunk, tempo only; limit 20%): 1/6 (16.7%, 95% CI [3.0%, 56.4%])
+Detection, arm too low (fault_lowarm) by peak_angle (minimum 70%): 3/3 (100.0%, 95% CI [43.9%, 100.0%])
+Detection, trunk lean (fault_trunk) by trunk_lean (minimum 70%): 3/3 (100.0%, 95% CI [43.9%, 100.0%])
+Detection, too fast (fault_fast) by tempo (minimum 70%): 3/3 (100.0%, 95% CI [43.9%, 100.0%])
+Exploratory, no pass criterion: bent elbow (fault_elbow) by elbow_straight: 0/3 (0.0%, 95% CI [0.0%, 56.1%])
+Not primary: false-fail counting every rule, including elbow_straight: 1/6 (16.7%, 95% CI [3.0%, 56.4%])
+insufficient_data reps, excluded above: 0/18 (0.0%, 95% CI [0.0%, 17.6%])
+Verdict: PASS
+
+One person, few reps: a pass here isn't evidence of accuracy across people, and with elbow_straight advisory it says nothing about detecting a bent elbow.

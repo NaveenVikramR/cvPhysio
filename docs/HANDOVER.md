@@ -23,7 +23,8 @@ Work since the snapshot below, all on `elbow-accuracy` and pushed:
   - `scripts/record_clip.py` now defaults to a separate team dataset (`data/recordings/team/`, `data/team_manifest.csv`), with `--exercise`, `--view` and rotation fault labels. It writes to the frozen `data/own_manifest.csv` only with `--dataset preregistered`.
   - `scripts/package_results.py` shares result files through `team_results/`.
 - **Subjects:** `s01` is the developer (calibration: tune freely on these clips). `s02` is the teammate (evaluation: nobody looks at or scores these clips until the rotation evaluation is pre-registered with the code frozen).
-- **Unchanged and still next:** the abduction pre-registered evaluation (laptop only; "How to resume", step 4). The pinned files still match their blob ids. The `src/` improvements (F2 and Phase 2 in the plan) wait for it.
+- **The abduction pre-registered evaluation has been run.** It ran on the laptop on 2026-10-31 at `dedd7c3`; this PC only learned of it on 2026-11-17. Verdict: demo config FAIL, `reference_relative` config PASS. It is written up in `docs/preregistered_own_clip_eval.md` ("Result"), with the raw outputs in `team_results/2026-11-17_preregistered-abduction-eval/`. Never re-run it. The 7 clips and the real manifest are now on the PC too (gitignored). The laptop is no longer needed: all development is on the PC. The sections below that say the evaluation is pending or laptop-only are out of date.
+- **Next:** the F2 improvements in `docs/dev_plan.md`, evaluated on new recordings, plus Stage 1 camera-angle clips for rotation.
 - **Tests:** 538 passing as of the commit that adds this section.
 
 ## What this is

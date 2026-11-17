@@ -4,6 +4,8 @@ Written and committed before `scripts/evaluate_own_clips.py` has been run on
 any real clip, and before any eval clip has been recorded. Git history shows
 the order. The evaluation below has no results yet.
 
+> **2026-11-17:** the evaluation has since been run. See "Result" at the end.
+
 ## Question
 
 Do the rule scorer's frozen thresholds accept correct shoulder abduction reps
@@ -363,3 +365,68 @@ both runs. It is run once more on the committed code before the evaluator, and t
 isn't run unless that run also prints OK to score.
 
 The reset applies to offline runs only. A live session keeps tracking from frame to frame.
+
+## Result (run 2026-10-31, recorded here 2026-11-17)
+
+Written after the run, from the run's own output files, which were copied from the laptop
+that ran it. Nothing below was recomputed, and the evaluator has not been run again. Per
+"Rules for running it", rule 1, this run is the result.
+
+### The run
+
+| Item | Value |
+|---|---|
+| Date and machine | 2026-10-31, the laptop the clips were recorded on |
+| Commit | `dedd7c31a1437435d50ffd4ef441fd77f5d25df9`, working tree clean |
+| Pinned files | `scripts/compute_primary_outcomes.py` reports they match the pins at that commit (the evaluator blob from Amendment 4) |
+| Manifest | the seven clips under "Clips used" in Amendment 3, manifest hash `f21c289738ca3e72` |
+| Settings | `landmark_space` world, elbow statistic `min` |
+| QC gate | `scripts/qc_all.py` printed OK to score for all seven clips on the committed code before the evaluator ran, as Amendment 4 requires. This is the account of the person who ran it; the QC output itself was not kept |
+| Rep counts | all five eval clips detected exactly their planned reps (6, and 3 for each fault) |
+| `insufficient_data` | 0 of 18 eval reps, in both modes |
+
+An earlier invocation on 2026-10-30, at commit `5e8c064`, aborted with only 2 reps in the
+reference clip. That is the inconclusive first run in Amendment 2, on clips that were
+discarded and re-recorded.
+
+### Outcomes (Amendment 1's criteria: `elbow_straight` advisory)
+
+| Criterion | Demo `absolute` config | Derived `reference_relative` config |
+|---|---|---|
+| False-fail on correct reps, peak, trunk and tempo only (at most 20%) | 0/6 (0.0%, 95% CI [0.0%, 39.0%]) | 1/6 (16.7%, 95% CI [3.0%, 56.4%]) |
+| `fault_lowarm` caught by `peak_angle` (at least 70%) | 0/3 (0.0%, 95% CI [0.0%, 56.1%]) | 3/3 (100.0%, 95% CI [43.9%, 100.0%]) |
+| `fault_trunk` caught by `trunk_lean` (at least 70%) | 0/3 (0.0%, 95% CI [0.0%, 56.1%]) | 3/3 (100.0%, 95% CI [43.9%, 100.0%]) |
+| `fault_fast` caught by `tempo` (at least 70%) | 2/3 (66.7%, 95% CI [20.8%, 93.9%]) | 3/3 (100.0%, 95% CI [43.9%, 100.0%]) |
+| Exploratory: `fault_elbow` caught by `elbow_straight` | 3/3 (100.0%, 95% CI [43.9%, 100.0%]) | 0/3 (0.0%, 95% CI [0.0%, 56.1%]) |
+| Not primary: false-fail counting every rule, `elbow_straight` included | 6/6 (100.0%, 95% CI [61.0%, 100.0%]) | 1/6 (16.7%, 95% CI [3.0%, 56.4%]) |
+| **Verdict** | **FAIL** (three faults below 70%) | **PASS** |
+
+In the demo config, the false-fails counting every rule all came from `elbow_straight` (6 of
+6). In the reference config the one false-fail came from `tempo`.
+
+### What this shows, and what it doesn't
+
+- For this one person, in one setup, fixed thresholds did not catch deliberate faults, and
+  thresholds derived from the person's own reference and calibration reps did, with one
+  false-fail in six correct reps.
+- The sample is tiny: three reps per fault, six correct reps, one subject. Every interval
+  above is wide, and a pass here isn't evidence of accuracy across people.
+- The reference config's tolerances came from 5 calibration reps (the evaluator warns
+  n < 30).
+- With `elbow_straight` advisory, the pass says nothing about detecting a bent elbow. The
+  reference config caught 0 of 3 bent-elbow reps.
+- The clips are the takes that passed QC after 19 failed takes (Amendment 3), not typical
+  attempts.
+
+### Raw outputs
+
+`team_results/2026-11-17_preregistered-abduction-eval/`: the evaluator's report and CSV, its
+console output for both invocations, and `compute_primary_outcomes.py`'s output, as copied
+from the laptop. Each file states its own commit.
+
+### After this result
+
+Per "Changes", any later change of statistic, model or threshold needs newly recorded eval
+clips, because these have now been scored. The landmark-accuracy and rotation work in
+`docs/dev_plan.md` is therefore evaluated on new recordings (`docs/RECORDING_GUIDE.md`), not
+on these seven clips.

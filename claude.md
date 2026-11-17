@@ -41,12 +41,14 @@ so say so if the split leaves any subject group very small.
 - Keep modules independent — feature_extraction.py should not import
   anything from classifier.py, etc. Each module's output is the next
   module's only input.
-- Pre-registration freeze: files pinned by blob id in
-  docs/preregistered_own_clip_eval.md (thresholds, pose config, rules.py,
-  evaluator) must not change unless an amendment is logged first. Until the
-  own-clip evaluation has run, also avoid behaviour changes to the rest of
-  the abduction scoring path (pose_estimation, feature_extraction,
-  smoothing, pipeline, statuses), since they change its results too.
+- Pre-registered abduction evaluation: run on 2026-10-31, result recorded in
+  docs/preregistered_own_clip_eval.md ("Result"). It must never be re-run or
+  re-scored. Code and threshold changes are allowed again, but they are
+  evaluated on NEW recordings (docs/RECORDING_GUIDE.md), never on those
+  seven clips, and any change to a pinned file is noted in that doc's
+  "Changes" table.
+- Team recordings: subject s02's clips (role eval) are not looked at or
+  scored until the code is frozen and that evaluation is pre-registered.
 
 ## Stack
 Python, OpenCV, MediaPipe, scikit-learn, pandas, Streamlit, pyttsx3.
