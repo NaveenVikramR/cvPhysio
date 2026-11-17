@@ -37,7 +37,8 @@ from src.pipeline import Session
 MODES = ("per_frame", "auto", "RIGHT", "LEFT")
 REPORT_PATH = Path("results/side_lock.md")
 CSV_PATH = Path("results/side_lock.csv")
-VIEW_ORDER = ["front", "half-profile", "profile"]
+# A recording holding reps from two views is labelled with both (bm.recording_view).
+VIEW_ORDER = ["front", "half-profile", "front+half-profile", "profile", "half-profile+profile"]
 
 
 def run_span(cache: dict, start: int, end: int, mode: str, landmark_space: str) -> dict:
@@ -74,7 +75,7 @@ def collect(manifest: pd.DataFrame, split: dict, landmark_space: str) -> pd.Data
         for mode in MODES:
             r = run_span(cache, start, end, mode, landmark_space)
             rows.append({"subject": int(rec.subject), "group": "calibration" if int(rec.subject) in calib else "evaluation",
-                         "video_id": rec.video_id, "camera": rec.camera, "view": rec.view, "mode": mode,
+                         "video_id": rec.video_id, "camera": rec.camera, "view": bm.recording_view(manifest, rec.video_id, rec.camera), "mode": mode,
                          "annotated": annotated, **r, "signed_error": r["detected"] - annotated,
                          "exact": int(r["detected"] == annotated)})
     return pd.DataFrame(rows)

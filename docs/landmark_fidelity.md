@@ -61,9 +61,12 @@ The live app (Streamlit "Which arm?" selector, and `--side` with `--video`) now 
 | View, group | Mode | Exact rep count | Mean signed error | Reps measured on both arms |
 |---|---|---|---|---|
 | front, calibration | per_frame → auto | 2/3 → 2/3 | −0.33 → −0.33 | 4/24 → 0/24 |
-| front, evaluation | per_frame → auto | 1/6 → 2/6 | +1.50 → +0.33 | 8/123 → 0/116 |
+| front, evaluation | per_frame → auto | 0/1 → 1/1 | +4.00 → 0.00 | 7/14 → 0/10 |
+| front+half-profile, evaluation | per_frame → auto | 1/5 → 1/5 | +1.00 → +0.40 | 1/109 → 0/106 |
 | half-profile, calibration | per_frame → auto | 2/6 → 3/6 | −2.17 → +0.83 | 11/45 → 0/63 |
 | half-profile, evaluation | per_frame → auto | 0/2 → 0/2 | +1.00 → +1.00 | 10/22 → 0/22 |
+
+*Corrected 2026-11-17:* five evaluation recordings (PM_032, PM_039, PM_109, PM_114, PM_122, camera 17) each hold a block of front reps followed by a block of half-profile reps. The first version of this table filed them under "front" by their first rep (front evaluation: 1/6 → 2/6, +1.50 → +0.33, 8/123 → 0/116). The totals are unchanged; only the labels are. Scripts now label such recordings `front+half-profile` (`scripts/benchmark_rehab24.recording_view`).
 
 - **No rep is measured on a mix of arms any more.**
 - **`auto` chose the right arm** in all 17 front and half-profile recordings. Its results there are identical to fixing the right arm by hand.

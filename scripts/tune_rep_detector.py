@@ -114,9 +114,10 @@ def load_recordings(manifest: pd.DataFrame, subjects: set[int]) -> list[dict]:
     out = []
     for _, rec in manifest.drop_duplicates(["video_id", "camera"]).iterrows():
         video = bm.DATA_DIR / "videos" / rec.video
-        if rec.view not in VIEWS or int(rec.subject) not in subjects or not video.exists():
+        view = bm.recording_view(manifest, rec.video_id, rec.camera)
+        if not set(view.split("+")) <= set(VIEWS) or int(rec.subject) not in subjects or not video.exists():
             continue
-        out.append({"id": f"{rec.video_id}/{rec.camera}", "view": rec.view, "subject": int(rec.subject),
+        out.append({"id": f"{rec.video_id}/{rec.camera}", "view": view, "subject": int(rec.subject),
                     "cache": landmark_cache.get_or_build(video),
                     "annotated": len(manifest[(manifest.video_id == rec.video_id) & (manifest.camera == rec.camera)]),
                     "span": bm.recording_span(manifest, rec.video_id, rec.camera)})
@@ -129,7 +130,7 @@ def label(settings: dict) -> str:
 
 def summary_line(settings: dict, g: pd.DataFrame) -> str:
     parts = []
-    for view in VIEWS:
+    for view in RECORDING_VIEWS:
         v = g[g.view == view]
         parts.append(f"{bm.rate_with_ci(int(v.exact.sum()), len(v))} | {(v.detected - v.annotated).mean():+.2f}"
                      if len(v) else "- | -")
@@ -137,9 +138,10 @@ def summary_line(settings: dict, g: pd.DataFrame) -> str:
             f"{int(g.discarded.sum())} | " + " | ".join(parts) + " |")
 
 
-HEADER = ["| baseline / start_frames / end_frames | exact (all) | total abs error | discarded | front exact | "
-          "front mean signed error | half-profile exact | half-profile mean signed error |",
-          "|---|---|---|---|---|---|---|---|"]
+RECORDING_VIEWS = ("front", "half-profile", "front+half-profile")  # bm.recording_view labels
+HEADER = ["| baseline / start_frames / end_frames | exact (all) | total abs error | discarded | "
+          + " | ".join(f"{v} exact | {v} mean signed error" for v in RECORDING_VIEWS) + " |",
+          "|---|---|---|---|" + "---|---|" * len(RECORDING_VIEWS)]
 
 
 def main() -> None:

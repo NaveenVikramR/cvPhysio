@@ -150,6 +150,16 @@ def video_landmark_cache(video_path: Path) -> dict:
 # (a) rep detection -- span-restricted via src.pipeline.Session
 # ---------------------------------------------------------------------------
 
+def recording_view(manifest: pd.DataFrame, video_id: str, camera: str) -> str:
+    """The view of one camera recording. Some recordings hold two blocks of
+    reps filmed from different angles (e.g. PM_032/cam17: 11 front reps,
+    then 10 half-profile reps); those are labelled with both views joined
+    by "+", in VIEW_ORDER order, never by their first rep's view alone."""
+    views = set(manifest[(manifest["video_id"] == video_id) & (manifest["camera"] == camera)]["view"])
+    order = ["front", "half-profile", "profile"]
+    return "+".join(v for v in order if v in views)
+
+
 def recording_span(manifest: pd.DataFrame, video_id: str, camera: str) -> tuple[int, int]:
     reps = manifest[(manifest["video_id"] == video_id) & (manifest["camera"] == camera)]
     return int(reps["start_frame"].min()), int(reps["end_frame"].max())

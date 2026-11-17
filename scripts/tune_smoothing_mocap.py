@@ -119,7 +119,8 @@ def run_recording(rec: dict, cell, landmark_space: str) -> tuple[pd.DataFrame, i
         event, *_ = session.process_frame(lm, smoother, f / fps, roles)
         detected += event == "rep_complete"
         if f in rep_of and f < len(joints):
-            rows.append({"rep": rep_of[f], "frame": f, **mocap_angles(joints[f]), **mediapipe_angles(smoother.last)})
+            rows.append({"rep": rep_of[f], "frame": f, "view": reps.loc[rep_of[f], "view"],
+                         **mocap_angles(joints[f]), **mediapipe_angles(smoother.last)})
     session.stop()
     return pd.DataFrame(rows), detected
 
@@ -138,7 +139,7 @@ def evaluate_cell(recordings: list[dict], cell, landmark_space: str) -> tuple[pd
     frames, per_rec = [], []
     for rec in recordings:
         df, detected = run_recording(rec, cell, landmark_space)
-        df = df.assign(recording=rec["id"], view=rec["view"], subject=rec["subject"])
+        df = df.assign(recording=rec["id"], subject=rec["subject"])  # "view" is each rep's own
         frames.append(df)
         stats = rep_stats(df).assign(recording=rec["id"], view=rec["view"], subject=rec["subject"],
                                      detected=detected, annotated=rec["annotated"])
@@ -187,14 +188,15 @@ def select_cell(table: pd.DataFrame) -> tuple | None:
 def load_recordings(manifest: pd.DataFrame, subjects: set[int]) -> list[dict]:
     out = []
     for _, rec in manifest.drop_duplicates(["video_id", "camera"]).iterrows():
-        if rec.view not in VIEWS or int(rec.subject) not in subjects:
+        view = bm.recording_view(manifest, rec.video_id, rec.camera)
+        if not set(view.split("+")) <= set(VIEWS) or int(rec.subject) not in subjects:
             continue
         video = bm.DATA_DIR / "videos" / rec.video
         joints = bm.load_mocap_joints(rec.video_id)
         if joints is None or not video.exists():
             continue
         all_reps = manifest[(manifest.video_id == rec.video_id) & (manifest.camera == rec.camera)]
-        out.append({"id": f"{rec.video_id}/{rec.camera}", "view": rec.view, "subject": int(rec.subject),
+        out.append({"id": f"{rec.video_id}/{rec.camera}", "view": view, "subject": int(rec.subject),
                     "cache": landmark_cache.get_or_build(video), "joints": joints,
                     "reps": all_reps[~all_reps.mocap_erroneous.astype(bool)], "annotated": len(all_reps),
                     "span": bm.recording_span(manifest, rec.video_id, rec.camera)})
