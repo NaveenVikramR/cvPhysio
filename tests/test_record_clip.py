@@ -18,8 +18,9 @@ from src.feature_extraction import LEFT, RIGHT
 
 
 def make_args(**overrides):
-    values = dict(role="eval", intended="fault_trunk", expected_reps=3, subject="demo",
-                  notes="window light", camera=0, seconds=None)
+    values = dict(dataset="preregistered", exercise="abduction", view="front", role="eval",
+                  intended="fault_trunk", expected_reps=3, subject="demo", notes="window light", camera=0,
+                  seconds=None)
     values.update(overrides)
     return argparse.Namespace(**values)
 
@@ -252,7 +253,7 @@ def test_warning_stops_after_the_start_window():
 
     clock = iter([100.0, 101.0, 102.0, 103.0])
 
-    def fake_draw(frame, landmarks, status, colour, warning=False):
+    def fake_draw(frame, landmarks, status, colour, warning=False, **_kwargs):
         drawn.append(warning)
         return frame
 
@@ -322,3 +323,110 @@ def test_args_defaults():
 def test_args_refused(bad):
     with pytest.raises(SystemExit):
         rc.parse_args(bad)
+
+
+# --- team dataset (docs/RECORDING_GUIDE.md) ----------------------------------
+
+TEAM_ARGS = ["--exercise", "rotation", "--view", "45", "--role", "eval", "--intended", "fault_short_in",
+             "--expected-reps", "5", "--subject", "friend01"]
+
+
+def test_team_is_the_default_dataset():
+    assert rc.parse_args(BASE_ARGS).dataset == "team"
+    assert rc.dataset_paths("team") == (rc.TEAM_RECORDINGS_DIR, rc.TEAM_MANIFEST_PATH)
+    assert rc.dataset_paths("preregistered") == (rc.RECORDINGS_DIR, rc.MANIFEST_PATH)
+
+
+def test_team_rotation_args_accepted():
+    args = rc.parse_args(TEAM_ARGS)
+    assert (args.exercise, args.view, args.intended) == ("rotation", "45", "fault_short_in")
+
+
+def test_test_role_for_camera_angle_takes():
+    assert rc.parse_args(["--exercise", "rotation", "--view", "side", "--role", "test", "--intended", "correct",
+                          "--expected-reps", "5", "--subject", "me"]).role == "test"
+
+
+@pytest.mark.parametrize("bad", [
+    # an abduction fault label on a rotation take
+    ["--exercise", "rotation", "--role", "eval", "--intended", "fault_lowarm", "--expected-reps", "5",
+     "--subject", "a"],
+    # a rotation fault label on an abduction take
+    ["--role", "eval", "--intended", "fault_short_out", "--expected-reps", "5", "--subject", "a"],
+    # underscore or space in the subject would break the filename
+    ["--role", "eval", "--intended", "correct", "--expected-reps", "5", "--subject", "my_friend"],
+    ["--role", "eval", "--intended", "correct", "--expected-reps", "5", "--subject", "my friend"],
+    # test takes record correct reps only
+    ["--exercise", "rotation", "--role", "test", "--intended", "fault_fast", "--expected-reps", "5",
+     "--subject", "a"],
+    # the preregistered set is front-view abduction only, with its own roles
+    ["--dataset", "preregistered", "--exercise", "rotation", "--role", "eval", "--intended", "correct",
+     "--expected-reps", "5", "--subject", "a"],
+    ["--dataset", "preregistered", "--view", "side", "--role", "eval", "--intended", "correct",
+     "--expected-reps", "5", "--subject", "a"],
+    ["--dataset", "preregistered", "--role", "test", "--intended", "correct", "--expected-reps", "5",
+     "--subject", "a"],
+])
+def test_team_args_refused(bad):
+    with pytest.raises(SystemExit):
+        rc.parse_args(bad)
+
+
+def test_save_take_team_writes_its_own_manifest_and_folder(tmp_path):
+    recordings = tmp_path / "data" / "recordings" / "team"
+    manifest = tmp_path / "data" / "team_manifest.csv"
+    spool = tmp_path / "spool.raw"
+    write_spool(spool, 10)
+    args = make_args(dataset="team", exercise="rotation", view="45", role="eval", intended="fault_short_in",
+                     subject="friend01", notes="")
+    video = rc.save_take(spool, [i / 10 for i in range(10)], 64, 48, args, "t",
+                         recordings_dir=recordings, manifest_path=manifest, root=tmp_path)
+    assert video.name == "rot_45_eval_fault_short_in_friend01_01.mp4"
+    sidecar = json.loads(video.with_suffix(".json").read_text())
+    assert (sidecar["dataset"], sidecar["exercise"], sidecar["view"], sidecar["subject"]) == \
+        ("team", "rotation", "45", "friend01")
+    with manifest.open(newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert list(rows[0]) == rc.TEAM_MANIFEST_COLUMNS
+    assert rows[0]["clip"] == "data/recordings/team/rot_45_eval_fault_short_in_friend01_01.mp4"
+    assert (rows[0]["exercise"], rows[0]["view"]) == ("rotation", "45")
+
+    write_spool(spool, 10)
+    second = rc.save_take(spool, [i / 10 for i in range(10)], 64, 48, args, "t",
+                          recordings_dir=recordings, manifest_path=manifest, root=tmp_path)
+    assert second.name.endswith("_02.mp4")
+
+
+def test_team_take_refuses_the_preregistered_manifest(tmp_path):
+    spool = tmp_path / "spool.raw"
+    write_spool(spool, 5)
+    args = make_args(dataset="team", exercise="rotation", view="front", role="test", intended="correct",
+                     subject="me")
+    own = tmp_path / "own_manifest.csv"
+    with pytest.raises(ValueError, match="pre-registered"):
+        rc.save_take(spool, [i / 10 for i in range(5)], 64, 48, args, "t",
+                     recordings_dir=tmp_path, manifest_path=own, root=tmp_path)
+    assert not own.exists()
+    assert not list(tmp_path.glob("*.mp4"))
+
+
+def test_rotation_start_warning_wording():
+    frame = np.zeros((120, 400, 3), np.uint8)
+    abd = rc.draw_preview(frame, None, "s", (255, 255, 255), arms_up_warning=True)
+    rot = rc.draw_preview(frame, None, "s", (255, 255, 255), arms_up_warning=True,
+                          warning_text=rc.START_WARNING["rotation"])
+    assert not np.array_equal(abd, rot)  # different text drawn on the warning bar
+    assert rc.START_WARNING["rotation"] != rc.START_WARNING["abduction"]
+
+
+def test_team_calibration_subject_may_record_faults():
+    # Tuning fault detection needs fault examples from the calibration subject.
+    args = rc.parse_args(["--exercise", "rotation", "--role", "calibration", "--intended", "fault_fast",
+                          "--expected-reps", "5", "--subject", "s01"])
+    assert args.intended == "fault_fast"
+
+
+def test_preregistered_non_eval_roles_still_correct_only():
+    with pytest.raises(SystemExit):
+        rc.parse_args(["--dataset", "preregistered", "--role", "calibration", "--intended", "fault_fast",
+                       "--expected-reps", "5", "--subject", "demo"])

@@ -36,7 +36,7 @@ also far too few to generalise from.
 - The two clips where the resting forearm lies more in the image plane (z share about 0.3) agree better with the image proxy (r = 0.76 and 0.40) than the front view does (r = −0.26).
 - That fits "a front camera is the worst case", but these clips differ in more than camera angle. It needs a controlled test.
 
-## What this means for Phase 2 (`C:\Users\Admin\.claude\plans\nested-floating-reef.md`)
+## What this means for Phase 2 (`docs/dev_plan.md`)
 
 1. **Main fix: the rotation signal (2c).** Add a rotation measure that works in the image for a front camera. One example is the wrist's lateral offset from the elbow, normalised by a body length that stays visible, such as the upper arm. Choose between it and the 3D angle by camera setup. Retrain the rotation classifier on the same measure computed from UI-PRMD positions projected to the frontal plane.
 2. **Detector (2a), per exercise for rotation only:**

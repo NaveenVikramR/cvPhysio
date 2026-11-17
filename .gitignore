@@ -21,6 +21,7 @@ scratch/
 !.streamlit/config.toml
 data/clips_manifest.csv
 data/own_manifest.csv
+data/team_manifest.csv
 results/
 data/rehab24_6/
 data/rehab24_manifest.csv

@@ -1,5 +1,15 @@
-"""Records one own-clip for scripts/evaluate_own_clips.py, following
-docs/recording_protocol.md's naming and manifest conventions.
+"""Records one clip with a guided live preview, following
+docs/recording_protocol.md (and docs/RECORDING_GUIDE.md for team recordings).
+
+Two datasets, chosen with --dataset:
+  team (default): any exercise (--exercise abduction|rotation) and camera
+    view (--view front|45|side). Writes data/recordings/team/<clip>.mp4/.json
+    and a row in data/team_manifest.csv. Never touches the pre-registered
+    manifest -- save_take() refuses to.
+  preregistered: the original own-clip set for scripts/evaluate_own_clips.py
+    (front-view abduction only). Writes data/recordings/<clip>.mp4/.json and
+    a row in data/own_manifest.csv. That evaluation's clips are final, so
+    this is kept only for completeness and must be asked for explicitly.
 
 Capture goes through src.pose_estimation.open_webcam(), the same call the
 live app makes -- it requests no resolution or fps, so the clip has whatever
@@ -16,8 +26,7 @@ because an mp4's fps is fixed when its writer is opened and the measured fps
 isn't known until recording ends. Pose runs on a separate thread so inference
 can't lower the recording frame rate.
 
-Writes only data/recordings/<clip>.mp4, data/recordings/<clip>.json and a
-row in data/own_manifest.csv (all gitignored). No network use.
+Everything it writes is gitignored. No network use.
 """
 
 import argparse
@@ -45,6 +54,28 @@ ROLES = ("reference", "calibration", "eval")
 INTENDED = ("correct", "fault_lowarm", "fault_trunk", "fault_elbow", "fault_fast")
 MANIFEST_COLUMNS = ["clip", "role", "intended", "expected_reps", "subject", "notes"]
 
+# Team dataset (docs/RECORDING_GUIDE.md).
+TEAM_RECORDINGS_DIR = RECORDINGS_DIR / "team"
+TEAM_MANIFEST_PATH = REPO_ROOT / "data" / "team_manifest.csv"
+TEAM_MANIFEST_COLUMNS = ["clip", "exercise", "view", "role", "intended", "expected_reps", "subject", "notes"]
+DATASETS = ("team", "preregistered")
+EXERCISES = ("abduction", "rotation")
+EXERCISE_PREFIX = {"abduction": "abd", "rotation": "rot"}
+VIEWS = ("front", "45", "side")
+# Team roles name the subject's group, not the take's purpose:
+#   test        camera-angle and practice takes, correct reps only, never scored
+#   calibration a subject whose clips may be looked at and tuned on
+#   eval        a held-out subject: nobody looks at or scores these until the
+#               code is frozen and the evaluation is pre-registered
+TEAM_ROLES = ("test", "calibration", "eval")
+INTENDED_BY_EXERCISE = {
+    "abduction": INTENDED,
+    "rotation": ("correct", "fault_short_out", "fault_short_in", "fault_elbow_drift", "fault_trunk_twist",
+                 "fault_fast"),
+}
+SUBJECT_RE = re.compile(r"[A-Za-z0-9-]+")  # goes into the filename; no "_" so names stay parseable
+START_WARNING = {"abduction": "ARMS UP - LOWER YOUR ARMS NOW", "rotation": "KEEP YOUR UPPER ARM AT YOUR SIDE"}
+
 DEFAULT_CAMERA_INDEX = 0  # open_webcam()'s default, which is what app.py calls
 DEFAULT_COUNTDOWN_S = 15.0  # time to walk from the keyboard to the recording spot
 MIN_VISIBILITY = 0.5  # same threshold as the confidence gate
@@ -69,17 +100,25 @@ def clip_stem(role: str, intended: str, index: int) -> str:
     return f"abd_{role}_{intended}_{index:02d}"
 
 
-def next_clip_index(recordings_dir: Path, role: str, intended: str) -> int:
-    """One past the highest index already used by this role/intended pair,
-    so a deleted earlier take never gets its number reused. Counts sidecars
-    too, in case an .mp4 was removed by hand and its .json left behind."""
-    pattern = re.compile(rf"abd_{role}_{intended}_(\d{{2,}})\.(?:mp4|json)")
+def team_stem_base(exercise: str, view: str, role: str, intended: str, subject: str) -> str:
+    return f"{EXERCISE_PREFIX[exercise]}_{view}_{role}_{intended}_{subject}"
+
+
+def next_index(recordings_dir: Path, stem_base: str) -> int:
+    """One past the highest index already used for stem_base, so a deleted
+    earlier take never gets its number reused. Counts sidecars too, in case
+    an .mp4 was removed by hand and its .json left behind."""
+    pattern = re.compile(rf"{re.escape(stem_base)}_(\d{{2,}})\.(?:mp4|json)")
     used = [
         int(match.group(1))
-        for match in (pattern.fullmatch(p.name) for p in recordings_dir.glob("abd_*"))
+        for match in (pattern.fullmatch(p.name) for p in recordings_dir.glob(f"{stem_base}_*"))
         if match
     ]
     return max(used, default=0) + 1
+
+
+def next_clip_index(recordings_dir: Path, role: str, intended: str) -> int:
+    return next_index(recordings_dir, f"abd_{role}_{intended}")
 
 
 def manifest_clip_path(video_path: Path, root: Path = REPO_ROOT) -> str:
@@ -88,25 +127,25 @@ def manifest_clip_path(video_path: Path, root: Path = REPO_ROOT) -> str:
     return video_path.relative_to(root).as_posix()
 
 
-def check_manifest_header(manifest_path: Path) -> None:
+def check_manifest_header(manifest_path: Path, columns: list[str] = MANIFEST_COLUMNS) -> None:
     """Raises rather than appending misaligned columns to an existing file."""
     if not manifest_path.exists():
         return
     with manifest_path.open(newline="") as f:
         header = next(csv.reader(f), None)
-    if header != MANIFEST_COLUMNS:
-        raise ValueError(f"{manifest_path} has header {header}; expected {MANIFEST_COLUMNS}")
+    if header != columns:
+        raise ValueError(f"{manifest_path} has header {header}; expected {columns}")
 
 
-def append_manifest_row(manifest_path: Path, row: dict) -> None:
-    check_manifest_header(manifest_path)
+def append_manifest_row(manifest_path: Path, row: dict, columns: list[str] = MANIFEST_COLUMNS) -> None:
+    check_manifest_header(manifest_path, columns)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     is_new = not manifest_path.exists() or manifest_path.stat().st_size == 0
     if not is_new and not manifest_path.read_bytes().endswith(b"\n"):
         with manifest_path.open("ab") as f:  # hand-edited file with no final newline
             f.write(b"\r\n")
     with manifest_path.open("a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=MANIFEST_COLUMNS)
+        writer = csv.DictWriter(f, fieldnames=columns)
         if is_new:
             writer.writeheader()
         writer.writerow(row)
@@ -136,14 +175,33 @@ def encode_spool(spool_path: Path, video_path: Path, width: int, height: int, fp
     return n_frames
 
 
+def dataset_paths(dataset: str) -> tuple[Path, Path]:
+    """(recordings_dir, manifest_path) for a dataset."""
+    if dataset == "preregistered":
+        return RECORDINGS_DIR, MANIFEST_PATH
+    return TEAM_RECORDINGS_DIR, TEAM_MANIFEST_PATH
+
+
 def save_take(spool_path: Path, timestamps: list[float], width: int, height: int, args: argparse.Namespace,
-              started_at: str, recordings_dir: Path = RECORDINGS_DIR, manifest_path: Path = MANIFEST_PATH,
+              started_at: str, recordings_dir: Path | None = None, manifest_path: Path | None = None,
               root: Path = REPO_ROOT) -> Path:
     """mp4, then sidecar, then manifest row -- the row goes last so the
-    manifest never lists a clip that failed to save."""
+    manifest never lists a clip that failed to save. A team take is refused
+    outright if it would land in the pre-registered manifest."""
+    dataset = getattr(args, "dataset", "preregistered")
+    default_dir, default_manifest = dataset_paths(dataset)
+    recordings_dir = recordings_dir or default_dir
+    manifest_path = manifest_path or default_manifest
+    team = dataset == "team"
+    if team and (manifest_path.resolve() == MANIFEST_PATH.resolve() or manifest_path.name == MANIFEST_PATH.name):
+        raise ValueError(f"Team recordings must never be written to the pre-registered {MANIFEST_PATH.name}")
+    recordings_dir.mkdir(parents=True, exist_ok=True)
     fps = measured_fps(timestamps)
-    index = next_clip_index(recordings_dir, args.role, args.intended)
-    stem = clip_stem(args.role, args.intended, index)
+    if team:
+        base = team_stem_base(args.exercise, args.view, args.role, args.intended, args.subject)
+        stem = f"{base}_{next_index(recordings_dir, base):02d}"
+    else:
+        stem = clip_stem(args.role, args.intended, next_clip_index(recordings_dir, args.role, args.intended))
     video_path = recordings_dir / f"{stem}.mp4"
     n_frames = encode_spool(spool_path, video_path, width, height, fps)
     if n_frames != len(timestamps):
@@ -157,15 +215,20 @@ def save_take(spool_path: Path, timestamps: list[float], width: int, height: int
         "camera_index": args.camera,
         "notes": args.notes,
     }
-    (recordings_dir / f"{stem}.json").write_text(json.dumps(sidecar, indent=2) + "\n")
-    append_manifest_row(manifest_path, {
+    row = {
         "clip": manifest_clip_path(video_path, root),
         "role": args.role,
         "intended": args.intended,
         "expected_reps": args.expected_reps,
         "subject": args.subject,
         "notes": args.notes,
-    })
+    }
+    if team:
+        sidecar.update(dataset="team", exercise=args.exercise, view=args.view, subject=args.subject,
+                       role=args.role, intended=args.intended, expected_reps=args.expected_reps)
+        row.update(exercise=args.exercise, view=args.view)
+    (recordings_dir / f"{stem}.json").write_text(json.dumps(sidecar, indent=2) + "\n")
+    append_manifest_row(manifest_path, row, TEAM_MANIFEST_COLUMNS if team else MANIFEST_COLUMNS)
     return video_path
 
 
@@ -207,7 +270,8 @@ def outside_box(landmarks: list | None) -> list[str]:
     ]
 
 
-def draw_preview(frame, landmarks: list | None, status: str, status_colour: tuple, arms_up_warning: bool = False) -> np.ndarray:
+def draw_preview(frame, landmarks: list | None, status: str, status_colour: tuple, arms_up_warning: bool = False,
+                 warning_text: str = START_WARNING["abduction"]) -> np.ndarray:
     view = frame.copy()
     height, width = view.shape[:2]
     margin_x, margin_y = int(width * FRAME_MARGIN_FRAC), int(height * FRAME_MARGIN_FRAC)
@@ -229,7 +293,7 @@ def draw_preview(frame, landmarks: list | None, status: str, status_colour: tupl
         cv2.putText(view, "OUT OF BOX: " + ", ".join(missing), (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 165, 255), 1)
     if arms_up_warning:
         cv2.rectangle(view, (0, height - 44), (width, height), (0, 0, 255), -1)
-        cv2.putText(view, "ARMS UP - LOWER YOUR ARMS NOW", (10, height - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        cv2.putText(view, warning_text, (10, height - 14), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
     return view
 
 
@@ -271,20 +335,26 @@ WINDOW = "record_clip"
 KEY_ESC = 27
 
 
-def show(frame, worker: PoseWorker, status: str, colour: tuple, check_arms: bool = True) -> int:
+def show(frame, worker: PoseWorker, status: str, colour: tuple, check_arms: bool = True,
+         exercise: str = "abduction") -> int:
+    """The start-position check is the same for both exercises -- the upper
+    arm hangs at the side (hip-shoulder-elbow below ARMS_UP_DEG) -- only the
+    wording differs, since a rotation starts with the elbow bent."""
     worker.submit(frame)
     warning = check_arms and arms_up(worker.angle_landmarks)
-    cv2.imshow(WINDOW, draw_preview(frame, worker.landmarks, status, colour, warning))
+    cv2.imshow(WINDOW, draw_preview(frame, worker.landmarks, status, colour, warning,
+                                    warning_text=START_WARNING[exercise]))
     return cv2.waitKey(1) & 0xFF
 
 
-def wait_for_start(capture, worker: PoseWorker, countdown_s: float = DEFAULT_COUNTDOWN_S) -> bool:
+def wait_for_start(capture, worker: PoseWorker, countdown_s: float = DEFAULT_COUNTDOWN_S,
+                   exercise: str = "abduction") -> bool:
     """Framing preview, then countdown. False if the take was discarded."""
     while True:
         ok, frame = capture.read()
         if not ok:
             raise RuntimeError("Camera stopped delivering frames")
-        key = show(frame, worker, "SPACE = start countdown, ESC = quit", (255, 255, 255))
+        key = show(frame, worker, "SPACE = start countdown, ESC = quit", (255, 255, 255), exercise=exercise)
         if key == KEY_ESC:
             return False
         if key == ord(" "):
@@ -294,12 +364,14 @@ def wait_for_start(capture, worker: PoseWorker, countdown_s: float = DEFAULT_COU
         ok, frame = capture.read()
         if not ok:
             raise RuntimeError("Camera stopped delivering frames")
-        if show(frame, worker, f"Starting in {int(remaining) + 1}... (ESC = quit)", (0, 255, 255)) == KEY_ESC:
+        if show(frame, worker, f"Starting in {int(remaining) + 1}... (ESC = quit)", (0, 255, 255),
+                exercise=exercise) == KEY_ESC:
             return False
     return True
 
 
-def record_frames(capture, worker: PoseWorker, spool_path: Path, seconds: float | None):
+def record_frames(capture, worker: PoseWorker, spool_path: Path, seconds: float | None,
+                  exercise: str = "abduction"):
     """Returns (timestamps, width, height), or None if discarded with ESC."""
     timestamps = []
     width = height = None
@@ -315,7 +387,7 @@ def record_frames(capture, worker: PoseWorker, spool_path: Path, seconds: float 
             timestamps.append(now)
             elapsed = now - timestamps[0]
             status = f"REC {elapsed:5.1f}s" + (f" / {seconds:g}s" if seconds else "") + "  q = stop, ESC = discard"
-            key = show(frame, worker, status, (0, 0, 255), check_arms=elapsed < ARMS_DOWN_START_S)
+            key = show(frame, worker, status, (0, 0, 255), check_arms=elapsed < ARMS_DOWN_START_S, exercise=exercise)
             if key == KEY_ESC:
                 return None
             if key == ord("q"):
@@ -324,9 +396,14 @@ def record_frames(capture, worker: PoseWorker, spool_path: Path, seconds: float 
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Record one own-clip for evaluate_own_clips.py.")
-    parser.add_argument("--role", required=True, choices=ROLES)
-    parser.add_argument("--intended", required=True, choices=INTENDED)
+    parser = argparse.ArgumentParser(description="Record one clip with a guided preview (docs/RECORDING_GUIDE.md).")
+    parser.add_argument("--dataset", choices=DATASETS, default="team",
+                        help="team (default) or preregistered (the frozen abduction own-clip set)")
+    parser.add_argument("--exercise", choices=EXERCISES, default="abduction")
+    parser.add_argument("--view", choices=VIEWS, default="front", help="camera angle to the subject")
+    parser.add_argument("--role", required=True, choices=sorted(set(ROLES) | set(TEAM_ROLES)))
+    parser.add_argument("--intended", required=True,
+                        choices=sorted({i for values in INTENDED_BY_EXERCISE.values() for i in values}))
     parser.add_argument("--expected-reps", required=True, type=int)
     parser.add_argument("--subject", required=True)
     parser.add_argument("--notes", default="")
@@ -337,7 +414,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.countdown < 0:
         parser.error("--countdown can't be negative")
-    if args.role != "eval" and args.intended != "correct":
+    if args.dataset == "preregistered":
+        if args.exercise != "abduction" or args.view != "front":
+            parser.error("--dataset preregistered is front-view abduction only")
+        if args.role not in ROLES:
+            parser.error(f"--dataset preregistered roles are {ROLES}")
+    else:
+        if args.role not in TEAM_ROLES:
+            parser.error(f"team roles are {TEAM_ROLES}")
+        if args.intended not in INTENDED_BY_EXERCISE[args.exercise]:
+            parser.error(f"--intended for {args.exercise} must be one of {INTENDED_BY_EXERCISE[args.exercise]}")
+        if not SUBJECT_RE.fullmatch(args.subject):
+            parser.error("--subject may use only letters, digits and '-' (it goes into the filename)")
+        # In the team set the role is the subject's group: calibration takes
+        # (tuning allowed) need faults too, so only "test" is correct-only.
+        if args.role == "test" and args.intended != "correct":
+            parser.error("--role test must use --intended correct (docs/RECORDING_GUIDE.md)")
+    if args.dataset == "preregistered" and args.role != "eval" and args.intended != "correct":
         parser.error(f"--role {args.role} must use --intended correct (docs/recording_protocol.md)")
     if args.expected_reps < 1:
         parser.error("--expected-reps must be at least 1")
@@ -351,8 +444,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    check_manifest_header(MANIFEST_PATH)
-    RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+    recordings_dir, manifest_path = dataset_paths(args.dataset)
+    columns = MANIFEST_COLUMNS if args.dataset == "preregistered" else TEAM_MANIFEST_COLUMNS
+    check_manifest_header(manifest_path, columns)
+    recordings_dir.mkdir(parents=True, exist_ok=True)
+    if args.dataset == "preregistered":
+        print("WARNING: --dataset preregistered appends to the frozen own-clip manifest "
+              "(docs/preregistered_own_clip_eval.md). Press ESC in the preview to back out.")
 
     # Imported here because it loads the pose model at import time.
     from src.pose_estimation import get_pose_landmarks_pair, load_config, open_webcam
@@ -366,13 +464,13 @@ def main(argv: list[str] | None = None) -> int:
     capture = open_webcam(args.camera)
     worker = PoseWorker(estimate)
     worker.start()
-    spool_path = RECORDINGS_DIR / ".record_clip_spool.raw"
+    spool_path = recordings_dir / ".record_clip_spool.raw"
     try:
-        if not wait_for_start(capture, worker, args.countdown):
+        if not wait_for_start(capture, worker, args.countdown, args.exercise):
             print("Discarded before recording. Nothing was saved.")
             return 1
         started_at = datetime.now().astimezone().isoformat(timespec="seconds")
-        recorded = record_frames(capture, worker, spool_path, args.seconds)
+        recorded = record_frames(capture, worker, spool_path, args.seconds, args.exercise)
         capture.release()
         cv2.destroyAllWindows()
         if recorded is None:
@@ -387,7 +485,7 @@ def main(argv: list[str] | None = None) -> int:
         spool_path.unlink(missing_ok=True)
 
     print(f"Saved {video_path.relative_to(REPO_ROOT)}: {len(timestamps)} frames, {width}x{height}, "
-          f"{measured_fps(timestamps):.2f} fps measured. Manifest row added to {MANIFEST_PATH.relative_to(REPO_ROOT)}.")
+          f"{measured_fps(timestamps):.2f} fps measured. Manifest row added to {manifest_path.relative_to(REPO_ROOT)}.")
     return 0
 
 

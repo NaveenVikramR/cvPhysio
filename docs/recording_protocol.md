@@ -1,5 +1,11 @@
 # Recording protocol for our own clips
 
+> **Team recordings (both exercises, any camera angle) follow
+> `docs/RECORDING_GUIDE.md` instead.** This file describes the original,
+> frozen abduction own-clip set (`data/own_manifest.csv`). Since 2026-11-17,
+> `scripts/record_clip.py` writes to that set only with `--dataset preregistered`.
+> Its default is the team dataset (`data/recordings/team/`, `data/team_manifest.csv`).
+
 For `data/own_manifest.csv` / `scripts/evaluate_own_clips.py` (see that
 script's docstring for how these clips are used). All clips for one
 subject should be recorded in one sitting, same spot, same setup --
