@@ -119,6 +119,10 @@ item text below is the original and is not rewritten):
     frame before being treated as the start of a real rep. Whether a
     single noisy frame can therefore spuriously start (and then, via
     `too_short`, silently discard) a rep is not addressed in any comment.
+    *2026-11-17:* yes, it does (one-frame flickers on REHAB24-6). An opt-in
+    `start_frames`/`end_frames` debounce now exists in `RepDetector`, but a
+    tuned setting did not hold up on evaluation subjects, so the default is
+    unchanged (`docs/landmark_fidelity.md`, "F2 step 4 result").
 
 15. **Calibration recovery pops one sample, not the whole window, on a
     high-stdev window.** `if stdev(calib_window) > 6.0: calib_window.popleft()`

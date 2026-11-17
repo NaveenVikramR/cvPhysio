@@ -65,6 +65,12 @@ CALIBRATION_STALL_FRAMES = 150  # ~a few seconds at a plausible live fps
 # back into rest" an actually answerable question from rep_buffer alone.
 RESCUE_REST_BAND_DEG = 2 * REST_BAND_DEG
 
+# Opt-in RepDetector settings (docs/landmark_fidelity.md, "F2 step 4"). The
+# defaults reproduce the original behaviour exactly.
+BASELINE_MODES = ("running", "stable", "fixed")
+STABLE_BASELINE_STD_DEG = 2.0
+DEFAULT_DETECTOR_SETTINGS = {"start_frames": 1, "end_frames": 1, "baseline": "running"}
+
 
 class RepDetector:
     """CALIBRATING -> RESTING <-> MOVING. Buffers per-frame angle_deg values
@@ -72,7 +78,23 @@ class RepDetector:
     extract_rep_features() + classifies exactly once per rep, not per frame.
     """
 
-    def __init__(self):
+    def __init__(self, start_frames: int = 1, end_frames: int = 1, baseline: str = "running"):
+        """start_frames: consecutive out-of-rest-band frames needed to start
+        a rep (1 = the original behaviour); those frames all become part of
+        the rep. end_frames: consecutive in-band frames needed to end one.
+        baseline: "running" (the original: mean of the last BASELINE_WINDOW
+        in-band frames, so a slow movement can drag it along), "stable"
+        (updated only when that window is full and its population stdev is
+        <= STABLE_BASELINE_STD_DEG) or "fixed" (the calibration value)."""
+        if start_frames < 1 or end_frames < 1:
+            raise ValueError("start_frames and end_frames must be >= 1")
+        if baseline not in BASELINE_MODES:
+            raise ValueError(f"baseline={baseline!r}; must be one of {BASELINE_MODES}")
+        self.start_frames = start_frames
+        self.end_frames = end_frames
+        self.baseline_mode = baseline
+        self.pending = []  # out-of-band frames waiting for start_frames
+        self.in_band_streak = 0
         self.state = "CALIBRATING"
         self.baseline = None
         self.calib_window = deque(maxlen=CALIBRATION_FRAMES)
@@ -113,11 +135,16 @@ class RepDetector:
             if not visible:
                 return "none", None
             if abs(angle_deg - self.baseline) <= REST_BAND_DEG:
-                self.rest_window.append(angle_deg)
-                self.baseline = statistics.fmean(self.rest_window)
+                self.pending = []  # a flicker shorter than start_frames
+                self._update_baseline(angle_deg)
                 return "none", None
-            self.rep_buffer = [angle_deg]
-            self.side_votes = [side]
+            self.pending.append((angle_deg, side))
+            if len(self.pending) < self.start_frames:
+                return "none", None
+            self.rep_buffer = [a for a, _ in self.pending]
+            self.side_votes = [sd for _, sd in self.pending]
+            self.pending = []
+            self.in_band_streak = 0
             self.bad_confidence_streak = 0
             self.state = "MOVING"
             return "none", None
@@ -135,8 +162,7 @@ class RepDetector:
                     rep_range = max(self.rep_buffer) - min(self.rep_buffer)
                     if len(self.rep_buffer) >= MIN_REP_FRAMES and rep_range >= MIN_REP_RANGE_DEG:
                         buffer, votes = self.rep_buffer, self.side_votes
-                        self.rest_window.append(self.rep_buffer[-1])
-                        self.baseline = statistics.fmean(self.rest_window)
+                        self._update_baseline(self.rep_buffer[-1])
                         self._reset_to_resting()
                         return "rep_complete", {"angle_deg": buffer, "side": votes}
                 self._reset_to_resting()
@@ -152,21 +178,36 @@ class RepDetector:
             return "rep_discarded", {"reason_code": DiscardReason.TOO_LONG.value, "message": "Movement took too long -- discarded."}
 
         if abs(angle_deg - self.baseline) > REST_BAND_DEG:
+            self.in_band_streak = 0
+            return "none", None
+        self.in_band_streak += 1
+        if self.in_band_streak < self.end_frames:
             return "none", None
 
-        # back within the rest band
+        # back within the rest band (for end_frames frames in a row)
         rep_range = max(self.rep_buffer) - min(self.rep_buffer)
         if len(self.rep_buffer) < MIN_REP_FRAMES or rep_range < MIN_REP_RANGE_DEG:
             self._reset_to_resting()
             return "rep_discarded", {"reason_code": DiscardReason.TOO_SHORT.value, "message": "Movement too brief/small -- discarded."}
 
         buffer, votes = self.rep_buffer, self.side_votes
-        self.rest_window.append(angle_deg)
-        self.baseline = statistics.fmean(self.rest_window)
+        self._update_baseline(angle_deg)
         self._reset_to_resting()
         return "rep_complete", {"angle_deg": buffer, "side": votes}
 
+    def _update_baseline(self, angle_deg: float) -> None:
+        if self.baseline_mode == "fixed":
+            return
+        self.rest_window.append(angle_deg)
+        if self.baseline_mode == "running":
+            self.baseline = statistics.fmean(self.rest_window)
+        elif (len(self.rest_window) == BASELINE_WINDOW
+              and statistics.pstdev(self.rest_window) <= STABLE_BASELINE_STD_DEG):
+            self.baseline = statistics.fmean(self.rest_window)
+
     def _reset_to_resting(self) -> None:
+        self.pending = []
+        self.in_band_streak = 0
         self.rep_buffer = []
         self.side_votes = []
         self.bad_confidence_streak = 0
@@ -258,8 +299,25 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
     event, payload = detector.update(visible, angle_deg, side, failed)
     new_state = detector.state
 
+    # start_frames > 1: frames the detector holds as "pending" become part of
+    # the rep once it starts, so their elbow/trunk/time values are held too.
+    pending = parallel.setdefault("pending", [])
+    if prev_state == "RESTING" and new_state == "RESTING":
+        if getattr(detector, "pending", None) and visible:
+            pending.append((elbow_val, trunk_val, t, elbow_wrist_visible))
+        elif not getattr(detector, "pending", None):
+            pending.clear()
+
     if prev_state == "RESTING" and new_state == "MOVING":
-        parallel["rep_start_t"] = t
+        parallel["rep_start_t"] = pending[0][2] if pending else t
+        for elbow_p, trunk_p, t_p, ew_p in pending:
+            parallel["total_frames"] += 1
+            parallel["elbow_wrist_visible_frames"] = parallel.get("elbow_wrist_visible_frames", 0) + ew_p
+            parallel["elbow"].append(elbow_p)
+            parallel["trunk"].append(trunk_p)
+            if t_p is not None:
+                parallel.setdefault("frame_t", []).append(t_p)
+        pending.clear()
 
     in_rep_span = prev_state == "MOVING" or (prev_state == "RESTING" and new_state == "MOVING")
     if in_rep_span:
@@ -442,13 +500,20 @@ class Session:
     `correction` ({exercise: offset_deg}) is the opt-in constant angle
     correction (config/angle_correction.json); None, the default, keeps
     raw angles so existing scripts reproduce.
+
+    `detector` (RepDetector keyword settings: start_frames, end_frames,
+    baseline) configures every RepDetector the
+    session creates; None, the default, is the original detector.
     """
 
-    def __init__(self, exercise: str, side: str = "per_frame", correction: dict | None = None):
+    def __init__(self, exercise: str, side: str = "per_frame", correction: dict | None = None,
+                 detector: dict | None = None):
         if side not in SIDE_MODES:
             raise ValueError(f"side={side!r}; must be one of {SIDE_MODES}")
         self.exercise = exercise
         self.correction = correction
+        self.detector_settings = dict(detector or {})
+        RepDetector(**self.detector_settings)  # validate now, not at start()
         self.side_mode = side
         self.locked_side: str | None = side if side in ("LEFT", "RIGHT") else None
         self.detector: RepDetector | None = None
@@ -470,10 +535,11 @@ class Session:
         if self.session_state != SessionState.IDLE:
             return
         if self.side_mode == "auto":
-            self._candidates = {s: (RepDetector(), _new_parallel()) for s in ("RIGHT", "LEFT")}
+            self._candidates = {s: (RepDetector(**self.detector_settings), _new_parallel())
+                                for s in ("RIGHT", "LEFT")}
             self.detector, self.parallel = self._candidates["RIGHT"]
         else:
-            self.detector = RepDetector()
+            self.detector = RepDetector(**self.detector_settings)
             self.parallel = _new_parallel()
 
     def stop(self) -> None:

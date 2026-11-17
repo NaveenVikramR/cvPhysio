@@ -125,6 +125,34 @@ Full table in `results/smoothing_mocap.md` (gitignored).
 
 **What changed:** only `config/smoothing.json`'s `enabled_comment`, which now records this result. `enabled` stays `false`.
 
+## F2 step 4 result: rep-detector debounce and baseline (2026-11-17)
+
+**Why.** Step 3 showed smoothing helped rep counts, which pointed at the rep detector. A per-event look at the 9 calibration recordings found three separate problems:
+1. The running baseline drifts: four recordings ended with it at 79–144° against a true rest of about 20°.
+2. One-frame flickers at the edge of the rest band start reps that are then discarded as too short (open question #14).
+3. A one-frame dip into the band splits a rep in two.
+
+**What changed in code (opt-in, default unchanged).** `RepDetector(start_frames=1, end_frames=1, baseline="running")` and `Session(..., detector=None)`:
+- `start_frames`: a rep starts only after N frames in a row outside the band. Those frames stay in the rep, and `process_frame` keeps elbow, trunk and time aligned with them.
+- `end_frames`: a rep ends only after M frames in a row back inside the band.
+- `baseline`: `running` is the original; `stable` updates only when the last 10 in-band frames vary by at most 2°; `fixed` keeps the calibration value.
+
+The defaults reproduce the original detector, and tests check that.
+
+**Tuning.** `scripts/tune_rep_detector.py` tried 48 combinations (baseline × start 1/2/3/5 × end 1/2/3/5) on the calibration recordings. The rule was fixed in the script beforehand: no recording worse, then most exact counts, then lowest total error, then fewest departures. Full table in `results/rep_detector.md` (gitignored).
+
+| Detector | Calibration exact | Calibration total error | Evaluation exact | Evaluation total error |
+|---|---|---|---|---|
+| current (running / 1 / 1) | 5/9 | 8 | 2/8 | **8** |
+| chosen (running / 1 / 5) | 7/9 | 3 | 3/8 | 24 |
+
+**Result: not adopted; the app keeps the original detector.**
+- The chosen setting failed on evaluation subjects: one more exact recording, but three times the total count error. PM_114/cam17 fell from 22 counted reps to 13 (annotated 22) and PM_024/cam18 rose from 11 to 18 (annotated 10).
+- An end debounce tuned on 9 recordings from 3 people did not carry over to faster or differently paced subjects. Calibration counts are a weak basis for detector settings: across the whole grid, the best cells differed from the current detector by only 1–2 recordings.
+- The evaluation subjects have now been seen for this question, so nothing is re-tuned against them. Any further detector change needs fresh recordings (Stage 3 s01 for tuning, s02 kept for the evaluation).
+- `fixed` and `stable` baselines never beat `running` on abduction, despite the drift. They are kept for rotation, where `docs/rotation_diagnosis.md` found the drift stops rep detection completely; they will be tested on rotation clips.
+- **Not run:** the own-clip check, since nothing was adopted.
+
 ## Improvements to try in F2, ranked by expected gain against effort
 
 All of these come after the abduction pre-registered evaluation has run, because each one changes abduction results. Each is fitted on calibration subjects only and reported on evaluation subjects.
