@@ -16,7 +16,8 @@ Update the status table when a step finishes. History is in `git log`.
 | F2 step 2: shoulder offset correction | done (front-view eval MAE 10.53° → 6.28°) | `docs/landmark_fidelity.md` "F2 step 2 result" |
 | F2 step 3: smoothing tuned against mocap | done: no setting helps the angle, smoothing stays off; it did help rep counts (→ debounce) | `docs/landmark_fidelity.md` "F2 step 3 result" |
 | F2 step 4: rep-detector debounce / baseline | done: opt-in options added; tuned setting failed on evaluation subjects (total count error 8 → 24), not adopted | `docs/landmark_fidelity.md` "F2 step 4 result" |
-| F2 next: elbow measure; Phase 2 rotation fixes (try `fixed`/`stable` baseline there) | **next** (rotation parts still need Stage 1) | below |
+| F2 step 5: per-rep elbow measure | done: no candidate beat the current one on evaluation subjects; `elbow_straight` stays advisory | `docs/landmark_fidelity.md` "F2 step 5 result" |
+| F3: re-measure and before/after summary for the review; Phase 2 rotation fixes (try `fixed`/`stable` baseline there) | **next** (rotation parts still need Stage 1) | below |
 | Stage 3 team dataset, Phase 3 evaluation | after Stage 1 decides the camera angle | below |
 
 **Change to Phase 3 (2026-11-17):** team recordings now happen *before* the rotation

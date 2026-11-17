@@ -153,6 +153,23 @@ The defaults reproduce the original detector, and tests check that.
 - `fixed` and `stable` baselines never beat `running` on abduction, despite the drift. They are kept for rotation, where `docs/rotation_diagnosis.md` found the drift stops rep detection completely; they will be tested on rotation clips.
 - **Not run:** the own-clip check, since nothing was adopted.
 
+## F2 step 5 result: per-rep elbow measure (2026-11-17)
+
+**Why per rep.** Finding 2 was frame by frame: MediaPipe follows only a fifth to a quarter of the elbow's movement. But `elbow_straight` makes one decision per rep. So the question is whether a per-rep statistic ranks reps by how bent they really are. Ex1 reps do vary: the true per-rep minimum elbow angle ranges from about 120° to 167°, and several incorrect reps really are bent.
+
+**What was run.** `scripts/compare_elbow_rep_stats.py` compared 12 candidates: the 3D world, world x-y and image pixel angles, each reduced per rep by min, 10th percentile, median, or median around the peak. The truth is each rep's minimum mocap elbow angle. The rule was fixed in the script beforehand: highest Spearman rho on front-view calibration reps, adopted only if it beats the current measure (3D, min) by at least 0.10, then confirmed on evaluation subjects (above the current measure and rho ≥ 0.5). Bent-rep AUC (true minimum < 145°) is reported but never used to choose. Full table in `results/elbow_rep_stats.md` (gitignored).
+
+| Measure | Front calibration rho (25 reps) | Front evaluation rho (63 reps) | Front evaluation bent-rep AUC (12 bent) |
+|---|---|---|---|
+| 3D, min (current) | 0.71 [0.41, 0.87] | **0.42** [0.18, 0.61] | 0.79 |
+| 3D, median (chosen) | 0.87 [0.71, 0.94] | 0.40 [0.15, 0.60] | 0.77 |
+
+**Result: no change; the current measure stays.**
+- The chosen median didn't carry over: on evaluation subjects it was no better than the current minimum. The top four calibration candidates were within 0.025 of each other (median 0.869, 10th percentile 0.867), so 25 reps from two people couldn't separate them.
+- **The current measure does carry real per-rep information in front view:** rho 0.42 and AUC 0.79 for spotting a truly bent rep on new subjects. That is more than the frame-level slope suggested, but too weak for a pass/fail rule. `elbow_straight` stays advisory, as Amendment 1 decided.
+- In half-profile no measure was reliable (current rho 0.02 on calibration, 0.08 on evaluation).
+- The evaluation subjects have now been seen for this question; a different elbow measure would need fresh recordings to justify it.
+
 ## Improvements to try in F2, ranked by expected gain against effort
 
 All of these come after the abduction pre-registered evaluation has run, because each one changes abduction results. Each is fitted on calibration subjects only and reported on evaluation subjects.
