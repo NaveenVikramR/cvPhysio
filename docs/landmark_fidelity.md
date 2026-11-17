@@ -49,6 +49,28 @@ group.
    - Per-frame side switching adds noise at rep starts and ends, exactly where the rep detector makes its decisions.
 6. **The confidence gate never triggers on this data:** 100% of front-view frames pass. Whether 0.5 is the right cutoff can't be judged from these recordings.
 
+## F2 step 1 result: arm locking (2026-11-17)
+
+**What changed.** `src.pipeline.Session` gained a `side` option:
+- `"per_frame"` is the original behaviour and still the API default, so existing scripts reproduce.
+- `"LEFT"`/`"RIGHT"` fixes the arm for the whole session.
+- `"auto"` runs one detector per arm until the first rep completes on either, then locks to that arm.
+
+The live app (Streamlit "Which arm?" selector, and `--side` with `--video`) now uses `auto` by default. Measured with `scripts/evaluate_side_lock.py` on every REHAB24-6 Ex1 recording; full table in `results/side_lock.md` (gitignored).
+
+| View, group | Mode | Exact rep count | Mean signed error | Reps measured on both arms |
+|---|---|---|---|---|
+| front, calibration | per_frame → auto | 2/3 → 2/3 | −0.33 → −0.33 | 4/24 → 0/24 |
+| front, evaluation | per_frame → auto | 1/6 → 2/6 | +1.50 → +0.33 | 8/123 → 0/116 |
+| half-profile, calibration | per_frame → auto | 2/6 → 3/6 | −2.17 → +0.83 | 11/45 → 0/63 |
+| half-profile, evaluation | per_frame → auto | 0/2 → 0/2 | +1.00 → +1.00 | 10/22 → 0/22 |
+
+- **No rep is measured on a mix of arms any more.**
+- **`auto` chose the right arm** in all 17 front and half-profile recordings. Its results there are identical to fixing the right arm by hand.
+- **Rep counts improved slightly.** With 2–6 recordings per row, the 95% intervals overlap almost completely, so this is a direction, not a demonstrated gain. Most remaining counting errors come from the rep detector itself (the drifting baseline and missing debounce in `docs/rotation_diagnosis.md`, open question #14).
+- **Profile view:** the right arm is hidden, so `auto` mostly locked the left. That view is unsupported, as finding 4 already says.
+- **Not checked:** a live webcam session with the new selector (the page renders; Start was not pressed), and the new team recordings, which don't exist yet.
+
 ## Improvements to try in F2, ranked by expected gain against effort
 
 All of these come after the abduction pre-registered evaluation has run, because each one changes abduction results. Each is fitted on calibration subjects only and reported on evaluation subjects.

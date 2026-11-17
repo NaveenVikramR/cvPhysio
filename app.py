@@ -42,6 +42,13 @@ CLASSIFIER_WARNING = (
 )
 
 
+# Which arm a session measures (src.pipeline.Session's `side`). "auto" locks to
+# the arm that completes the first rep; "per-frame" is the original
+# behaviour (re-picked by visibility every frame), kept for comparison.
+SIDE_CHOICES = {"auto": "auto", "right": "RIGHT", "left": "LEFT", "per-frame": "per_frame"}
+SIDE_LABELS = {"Auto-detect (the arm that moves)": "auto", "Right arm": "RIGHT", "Left arm": "LEFT"}
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="cvPhysio rehab coach")
     parser.add_argument("--scorer", choices=["rules", "classifier"], default="rules")
@@ -59,11 +66,15 @@ def parse_args():
                               "'reference_relative' mode. Ignored if the active rules config's mode isn't "
                               "'reference_relative'; if that mode is active but this is omitted, score_rep() "
                               "falls back to absolute thresholds and reports a one-line warning per rep.")
+    parser.add_argument("--side", choices=list(SIDE_CHOICES), default="auto",
+                         help="Which arm to measure, only with --video: auto (default) locks to the arm that "
+                              "completes the first rep; right/left fix it; per-frame re-picks it every frame "
+                              "by landmark visibility (the original behaviour).")
     return parser.parse_args(sys.argv[1:])
 
 
 def run_headless(video_path: str, exercise: str, scorer: str, span: tuple[int, int] | None = None,
-                  reference_path: str | None = None) -> None:
+                  reference_path: str | None = None, side: str = "auto") -> None:
     """--video path: score a video file frame-by-frame with no Streamlit
     UI, printing per-rep results to stdout. Used for verification against
     real recorded clips (no webcam available in that context).
@@ -113,7 +124,7 @@ def run_headless(video_path: str, exercise: str, scorer: str, span: tuple[int, i
         reference = rules_module.load_reference(reference_path)
         print(f"Reference: {reference_path} (name={reference['name']}, k_reps={reference['k_reps']})")
 
-    session = Session(exercise)
+    session = Session(exercise, side=side)
     smoother = build_smoother()
     cue_cooldown = rules_module.CueCooldown(config["cue_cooldown_s"]["value"]) if scorer == "rules" else None
     rep_count = 0
@@ -122,7 +133,7 @@ def run_headless(video_path: str, exercise: str, scorer: str, span: tuple[int, i
     if span is None:
         session.start()  # Start before frame 0, never Stop -- identical to the pre-this-flag behavior
     print(f"Scoring {video_path} (exercise={exercise}, scorer={scorer}, fps={fps:.2f}, smoothing={'on' if smoother else 'off'}"
-          f"{f', span={span}' if span else ''})")
+          f", side={side}{f', span={span}' if span else ''})")
 
     while True:
         ok, frame = cap.read()
@@ -144,6 +155,9 @@ def run_headless(video_path: str, exercise: str, scorer: str, span: tuple[int, i
                 last_hint_printed = hint
         else:
             last_hint_printed = None
+
+        if event == "rep_complete" and side == "auto" and rep_count == 0:
+            print(f"  (locked to the {session.locked_side} arm, the one that completed the first rep)")
 
         if event == "rep_complete":
             rep_count += 1
@@ -193,7 +207,8 @@ if __name__ == "__main__":
     ARGS = parse_args()
 
     if ARGS.video:
-        run_headless(ARGS.video, ARGS.exercise, ARGS.scorer, tuple(ARGS.span) if ARGS.span else None, ARGS.reference)
+        run_headless(ARGS.video, ARGS.exercise, ARGS.scorer, tuple(ARGS.span) if ARGS.span else None, ARGS.reference,
+                     SIDE_CHOICES[ARGS.side])
         raise SystemExit(0)
 
     PLAIN_UI = ui_theme.plain_ui_enabled()
@@ -225,6 +240,7 @@ if __name__ == "__main__":
             "Exercise", exercise_labels, default=exercise_labels[0],
         ) or exercise_labels[0]
     exercise = next(key for key, label in EXERCISES.items() if label == exercise_label)
+    side_mode = SIDE_LABELS[st.selectbox("Which arm?", list(SIDE_LABELS))]
     user_id = st.text_input("User ID", value="demo")
 
     tab_session, tab_reference, tab_history, tab_about = st.tabs(["Session", "Reference", "History", "About"])
@@ -352,7 +368,7 @@ if __name__ == "__main__":
                 "fps": round(fps, 2),
             }
             tracker = SessionTracker(user_id=user_id, exercise=exercise, camera_info=camera_info)
-            session = Session(exercise)
+            session = Session(exercise, side=side_mode)
             session.start()  # "Start session" button already gated entry into this block -- begin calibrating now
             smoother = build_smoother()
             required_roles = rules_module.required_joint_roles() if rules_config else None
@@ -586,7 +602,7 @@ if __name__ == "__main__":
                     cue_slot.markdown(ui_theme.render_cue_banner(ui_theme.STATE_ERROR), unsafe_allow_html=True)
                 st.stop()
             fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
-            session = Session(exercise)
+            session = Session(exercise, side=side_mode)
             session.start()
             smoother = build_smoother()
             required_roles = rules_module.required_joint_roles()

@@ -12,7 +12,8 @@ Update the status table when a step finishes. History is in `git log`.
 | F1: landmark-fidelity baseline | done | `docs/landmark_fidelity.md` |
 | Team recording kit | done | `docs/RECORDING_GUIDE.md`, `scripts/record_clip.py`, `scripts/package_results.py` |
 | Stage 1 camera-angle test clips | **next**, recorder (friend) | `docs/RECORDING_GUIDE.md` section 5 |
-| F2 improvements, Phase 2 rotation fixes | **unblocked** (rotation parts still need Stage 1) | below |
+| F2 step 1: per-session arm lock | done | `docs/landmark_fidelity.md` "F2 step 1 result" |
+| F2 next: shoulder offset correction, smoothing tuning; Phase 2 rotation fixes | **next** (rotation parts still need Stage 1) | below |
 | Stage 3 team dataset, Phase 3 evaluation | after Stage 1 decides the camera angle | below |
 
 **Change to Phase 3 (2026-11-17):** team recordings now happen *before* the rotation

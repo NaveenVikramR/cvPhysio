@@ -27,7 +27,7 @@ from src.feature_extraction import (
     compute_elbow_angle,
     compute_trunk_lean_deg,
     extract_features,
-    select_side,
+    side_joints,
 )
 from src.feedback import LANDMARK_LABELS
 from src.statuses import DiscardReason, RuleStatus
@@ -189,7 +189,8 @@ class RepDetector:
 
 
 def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: str,
-                   smoother=None, t: float | None = None, required_roles: set[str] | None = None):
+                   smoother=None, t: float | None = None, required_roles: set[str] | None = None,
+                   side: str | None = None):
     """One frame through confidence-gating + RepDetector, plus a parallel
     elbow_angle_deg/trunk_lean_deg buffer kept aligned with RepDetector's
     own internal rep_buffer -- RepDetector only tracks a single angle_deg
@@ -214,6 +215,9 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
     when scoring with rules, so the gate checks exactly what the active
     rules' features depend on (e.g. the wrist, for elbow_straight).
 
+    `side` ("LEFT"/"RIGHT") locks the arm every angle and the confidence
+    gate use; None keeps the per-frame select_side() pick (see Session).
+
     Mirrors RepDetector.update()'s own append rule: a frame is part of
     the rep buffer iff it's visible AND (the detector was already MOVING,
     which also covers the final frame that completes the rep, OR this
@@ -226,11 +230,11 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
     elbow_val = trunk_val = None
     elbow_wrist_visible = False
     if landmarks is not None:
-        side_joints = select_side(landmarks)
-        elbow_wrist_visible = all(landmarks[side_joints[role]][3] >= MIN_VISIBILITY for role in ("elbow", "wrist"))
-        visible, failed = check_confidence(landmarks, side_joints, exercise, required_roles)
-        features = extract_features(landmarks, exercise) if visible else None
-        elbow_val = compute_elbow_angle(landmarks)
+        joints = side_joints(landmarks, side)
+        elbow_wrist_visible = all(landmarks[joints[role]][3] >= MIN_VISIBILITY for role in ("elbow", "wrist"))
+        visible, failed = check_confidence(landmarks, joints, exercise, required_roles)
+        features = extract_features(landmarks, exercise, side) if visible else None
+        elbow_val = compute_elbow_angle(landmarks, side)
         trunk_val = compute_trunk_lean_deg(landmarks)
         if visible and (features is None or math.isnan(elbow_val) or math.isnan(trunk_val)):
             # extract_features() already excludes a NaN angle_deg (e.g. a
@@ -394,6 +398,18 @@ class SessionState:
     STOPPED = "STOPPED"
 
 
+SIDE_MODES = ("per_frame", "auto", "LEFT", "RIGHT")
+
+
+def _new_parallel() -> dict:
+    return {"elbow": [], "trunk": [], "total_frames": 0}
+
+
+def _payload_range(payload: dict) -> float:
+    angles = payload["angle_deg"]
+    return max(angles) - min(angles)
+
+
 class Session:
     """Wraps one RepDetector with a Start/Stop lifecycle: IDLE ->
     CALIBRATING -> ACTIVE -> STOPPED. Frames fed in while IDLE or
@@ -406,12 +422,29 @@ class Session:
     app.py's Streamlit Start/Stop buttons and --span (headless mode)
     both drive this same class, so "pressing Start/Stop" and "--span
     START END" are the same mechanism, not two independent ones.
+
+    `side` chooses which arm is measured:
+      "per_frame" (default): select_side() on every frame, the original
+        behaviour -- kept as the default so existing scripts reproduce.
+      "LEFT" / "RIGHT": that arm, for the whole session.
+      "auto": one detector per arm until the first rep completes on either,
+        then the session locks to that arm for good. A completed rep (not
+        the first movement) decides, so a brief flicker of the idle arm
+        can't win. Before the lock, discards are not reported (they may
+        come from the idle arm) and `detector` is a stand-in for state and
+        calibration hints. If both arms complete a rep on the same frame
+        (both arms moving), the larger range of motion wins.
     """
 
-    def __init__(self, exercise: str):
+    def __init__(self, exercise: str, side: str = "per_frame"):
+        if side not in SIDE_MODES:
+            raise ValueError(f"side={side!r}; must be one of {SIDE_MODES}")
         self.exercise = exercise
+        self.side_mode = side
+        self.locked_side: str | None = side if side in ("LEFT", "RIGHT") else None
         self.detector: RepDetector | None = None
         self.parallel: dict | None = None
+        self._candidates: dict | None = None  # "auto" before the lock: {side: (detector, parallel)}
         self._stopped = False
 
     @property
@@ -427,8 +460,12 @@ class Session:
         ACTIVE) or stopped -- there is no restart after Stop."""
         if self.session_state != SessionState.IDLE:
             return
-        self.detector = RepDetector()
-        self.parallel = {"elbow": [], "trunk": [], "total_frames": 0}
+        if self.side_mode == "auto":
+            self._candidates = {s: (RepDetector(), _new_parallel()) for s in ("RIGHT", "LEFT")}
+            self.detector, self.parallel = self._candidates["RIGHT"]
+        else:
+            self.detector = RepDetector()
+            self.parallel = _new_parallel()
 
     def stop(self) -> None:
         """CALIBRATING/ACTIVE -> STOPPED. One-way, idempotent."""
@@ -444,4 +481,24 @@ class Session:
         """
         if self.session_state in (SessionState.IDLE, SessionState.STOPPED):
             return "idle", None, False, []
-        return process_frame(self.detector, self.parallel, landmarks, self.exercise, smoother, t, required_roles)
+        if self._candidates is None:
+            return process_frame(self.detector, self.parallel, landmarks, self.exercise, smoother, t,
+                                 required_roles, side=self.locked_side)
+
+        # "auto", not locked yet. Smooth once, then feed both arms the same frame.
+        if smoother is not None:
+            landmarks = smoother.update(landmarks, t)
+        results = {s: process_frame(det, par, landmarks, self.exercise, None, t, required_roles, side=s)
+                   for s, (det, par) in self._candidates.items()}
+        completed = [s for s, r in results.items() if r[0] == "rep_complete"]
+        if completed:
+            winner = max(completed, key=lambda s: _payload_range(results[s][1]))
+            self.locked_side = winner
+            self.detector, self.parallel = self._candidates[winner]
+            self._candidates = None
+            return results[winner]
+        moving = [s for s, (det, _par) in self._candidates.items() if det.state == "MOVING"]
+        stand_in = moving[0] if moving else ("RIGHT" if self.detector is self._candidates["RIGHT"][0] else "LEFT")
+        self.detector, self.parallel = self._candidates[stand_in]
+        _event, _payload, visible, failed = results[stand_in]
+        return "none", None, visible, failed
