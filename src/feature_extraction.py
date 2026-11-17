@@ -4,12 +4,16 @@ enum. Output: feature dict, or None if confidence gating fails. Must not
 import pose_estimation or classifier.
 """
 
+import json
 import math
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 MIN_VISIBILITY = 0.5
+
+ANGLE_CORRECTION_PATH = Path("config/angle_correction.json")
 
 EXERCISES = {
     "shoulder_abduction": "Standing Shoulder Abduction",  # UI-PRMD movement 7
@@ -212,11 +216,30 @@ def check_confidence(
     return (len(failed) == 0, failed)
 
 
+def load_angle_correction(path: Path | str = ANGLE_CORRECTION_PATH) -> dict[str, float]:
+    """{exercise: offset_deg} from config/angle_correction.json. Exercises
+    without an entry get no correction."""
+    data = json.loads(Path(path).read_text())
+    return {ex: float(data[ex]["offset_deg"]) for ex in EXERCISES if ex in data}
+
+
+def correct_angle(angle: float, exercise: str, correction: dict[str, float] | None) -> float:
+    """raw - offset for `exercise`, clipped to the angle's [0, 180] range.
+    Returns `angle` unchanged when correction is None or has no entry for
+    the exercise (the default everywhere: correction is opt-in)."""
+    if not correction or exercise not in correction:
+        return angle
+    return min(180.0, max(0.0, angle - correction[exercise]))
+
+
 def extract_features(
-    landmarks: list[tuple[float, float, float, float]] | None, exercise: str, side: str | None = None
+    landmarks: list[tuple[float, float, float, float]] | None, exercise: str, side: str | None = None,
+    correction: dict[str, float] | None = None,
 ) -> dict | None:
     """`side` ("LEFT"/"RIGHT") locks the arm; None keeps the per-frame
-    select_side() pick."""
+    select_side() pick. `correction` ({exercise: offset_deg}, see
+    load_angle_correction()) shifts angle_deg by a fitted constant; None
+    (the default) leaves the raw angle."""
     if exercise not in EXERCISES:
         raise ValueError(f"Unknown exercise '{exercise}'. Must be one of {list(EXERCISES)}")
     if landmarks is None:
@@ -239,4 +262,4 @@ def extract_features(
         # an unusable angle.
         return None
 
-    return {"exercise": exercise, "side": side_name, "angle_deg": angle}
+    return {"exercise": exercise, "side": side_name, "angle_deg": correct_angle(angle, exercise, correction)}

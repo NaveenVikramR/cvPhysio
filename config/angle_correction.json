@@ -1,0 +1,10 @@
+{
+  "notice": "Constant offset subtracted from MediaPipe's primary angle per exercise: corrected = raw - offset_deg, clipped to [0, 180]. Opt-in: src.feature_extraction applies it only when a caller passes the loaded correction (the live app does; analysis scripts and the pre-registered evaluation do not). See docs/landmark_fidelity.md, 'F2 step 2'.",
+  "shoulder_abduction": {
+    "offset_deg": -4.82,
+    "fitted_on": "REHAB24-6 Ex1, front view, calibration subjects 1 and 2 (subject 6 has no front view), right arm, 4702 frames; truth = mocap hip-shoulder-elbow with the anatomical right hip",
+    "fitted_by": "scripts/fit_angle_correction.py at commit 0894b2a (method 'B offset'; -4.8214 rounded)",
+    "landmark_space": "world",
+    "evaluation": "front view, evaluation subjects 3, 4, 5, 7, 8, 9: MAE 10.53 -> 6.28 deg, bias -10.50 -> -5.68 deg, improved for 6/6 subjects"
+  }
+}

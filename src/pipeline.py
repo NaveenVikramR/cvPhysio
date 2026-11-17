@@ -190,7 +190,7 @@ class RepDetector:
 
 def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: str,
                    smoother=None, t: float | None = None, required_roles: set[str] | None = None,
-                   side: str | None = None):
+                   side: str | None = None, correction: dict | None = None):
     """One frame through confidence-gating + RepDetector, plus a parallel
     elbow_angle_deg/trunk_lean_deg buffer kept aligned with RepDetector's
     own internal rep_buffer -- RepDetector only tracks a single angle_deg
@@ -218,6 +218,10 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
     `side` ("LEFT"/"RIGHT") locks the arm every angle and the confidence
     gate use; None keeps the per-frame select_side() pick (see Session).
 
+    `correction` ({exercise: offset_deg}, src.feature_extraction.
+    load_angle_correction()) is passed to extract_features(); None leaves
+    the raw primary angle. Elbow and trunk angles are never corrected.
+
     Mirrors RepDetector.update()'s own append rule: a frame is part of
     the rep buffer iff it's visible AND (the detector was already MOVING,
     which also covers the final frame that completes the rep, OR this
@@ -233,7 +237,7 @@ def process_frame(detector: RepDetector, parallel: dict, landmarks, exercise: st
         joints = side_joints(landmarks, side)
         elbow_wrist_visible = all(landmarks[joints[role]][3] >= MIN_VISIBILITY for role in ("elbow", "wrist"))
         visible, failed = check_confidence(landmarks, joints, exercise, required_roles)
-        features = extract_features(landmarks, exercise, side) if visible else None
+        features = extract_features(landmarks, exercise, side, correction) if visible else None
         elbow_val = compute_elbow_angle(landmarks, side)
         trunk_val = compute_trunk_lean_deg(landmarks)
         if visible and (features is None or math.isnan(elbow_val) or math.isnan(trunk_val)):
@@ -434,12 +438,17 @@ class Session:
         come from the idle arm) and `detector` is a stand-in for state and
         calibration hints. If both arms complete a rep on the same frame
         (both arms moving), the larger range of motion wins.
+
+    `correction` ({exercise: offset_deg}) is the opt-in constant angle
+    correction (config/angle_correction.json); None, the default, keeps
+    raw angles so existing scripts reproduce.
     """
 
-    def __init__(self, exercise: str, side: str = "per_frame"):
+    def __init__(self, exercise: str, side: str = "per_frame", correction: dict | None = None):
         if side not in SIDE_MODES:
             raise ValueError(f"side={side!r}; must be one of {SIDE_MODES}")
         self.exercise = exercise
+        self.correction = correction
         self.side_mode = side
         self.locked_side: str | None = side if side in ("LEFT", "RIGHT") else None
         self.detector: RepDetector | None = None
@@ -483,12 +492,13 @@ class Session:
             return "idle", None, False, []
         if self._candidates is None:
             return process_frame(self.detector, self.parallel, landmarks, self.exercise, smoother, t,
-                                 required_roles, side=self.locked_side)
+                                 required_roles, side=self.locked_side, correction=self.correction)
 
         # "auto", not locked yet. Smooth once, then feed both arms the same frame.
         if smoother is not None:
             landmarks = smoother.update(landmarks, t)
-        results = {s: process_frame(det, par, landmarks, self.exercise, None, t, required_roles, side=s)
+        results = {s: process_frame(det, par, landmarks, self.exercise, None, t, required_roles, side=s,
+                                    correction=self.correction)
                    for s, (det, par) in self._candidates.items()}
         completed = [s for s, r in results.items() if r[0] == "rep_complete"]
         if completed:

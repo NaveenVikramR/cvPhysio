@@ -21,7 +21,7 @@ import streamlit as st
 from src import rules as rules_module
 from src import ui_theme
 from src.classifier import is_within_correct_range
-from src.feature_extraction import EXERCISES, extract_rep_features
+from src.feature_extraction import EXERCISES, extract_rep_features, load_angle_correction
 from src.feedback import SpeechFeedback, draw_overlay, message_for_result, message_for_rules_result
 from src.pipeline import (
     MODELS_DIR,
@@ -49,6 +49,36 @@ SIDE_CHOICES = {"auto": "auto", "right": "RIGHT", "left": "LEFT", "per-frame": "
 SIDE_LABELS = {"Auto-detect (the arm that moves)": "auto", "Right arm": "RIGHT", "Left arm": "LEFT"}
 
 
+def active_angle_correction(scorer: str, enabled: bool = True) -> dict | None:
+    """The opt-in constant angle correction (config/angle_correction.json,
+    docs/landmark_fidelity.md 'F2 step 2') for the rules scorer, or None.
+    The classifier scorer always gets raw angles: its feature ranges come
+    from UI-PRMD, not from the mocap the offset was fitted against."""
+    return load_angle_correction() if scorer == "rules" and enabled else None
+
+
+def reference_offset(correction: dict | None, exercise: str) -> float | None:
+    """The offset a reference recorded now would carry (None = raw angles)."""
+    return correction.get(exercise) if correction else None
+
+
+def reference_correction_warning(reference: dict, correction: dict | None) -> str | None:
+    """Warning text when a reference's angles were recorded with a different
+    angle offset than this session applies. References saved before the
+    correction existed have no "angle_offset_deg" key and count as raw."""
+    saved = reference.get("angle_offset_deg")
+    active = reference_offset(correction, reference["exercise"])
+    if saved == active:
+        return None
+    describe = lambda off: "raw angles" if off is None else f"offset {off:+.2f} deg"
+    # corrected = raw - offset, so reference minus session = active - saved
+    shift = (active or 0.0) - (saved or 0.0)
+    return (f"Reference '{reference['name']}' was recorded with {describe(saved)}, but this session uses "
+            f"{describe(active)}: its peak angle reads about {abs(shift):.1f} deg "
+            f"{'higher' if shift > 0 else 'lower'} than this session's angles would. Re-record the reference "
+            f"to remove the mismatch.")
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="cvPhysio rehab coach")
     parser.add_argument("--scorer", choices=["rules", "classifier"], default="rules")
@@ -70,11 +100,14 @@ def parse_args():
                          help="Which arm to measure, only with --video: auto (default) locks to the arm that "
                               "completes the first rep; right/left fix it; per-frame re-picks it every frame "
                               "by landmark visibility (the original behaviour).")
+    parser.add_argument("--angle-correction", choices=["on", "off"], default="on",
+                         help="Rules scorer only: subtract the fitted constant shoulder-angle offset in "
+                              "config/angle_correction.json (default on); off gives raw MediaPipe angles.")
     return parser.parse_args(sys.argv[1:])
 
 
 def run_headless(video_path: str, exercise: str, scorer: str, span: tuple[int, int] | None = None,
-                  reference_path: str | None = None, side: str = "auto") -> None:
+                  reference_path: str | None = None, side: str = "auto", angle_correction: bool = True) -> None:
     """--video path: score a video file frame-by-frame with no Streamlit
     UI, printing per-rep results to stdout. Used for verification against
     real recorded clips (no webcam available in that context).
@@ -119,12 +152,16 @@ def run_headless(video_path: str, exercise: str, scorer: str, span: tuple[int, i
             cap.release()
             return
 
+    correction = active_angle_correction(scorer, angle_correction)
     reference = None
     if scorer == "rules" and reference_path:
         reference = rules_module.load_reference(reference_path)
         print(f"Reference: {reference_path} (name={reference['name']}, k_reps={reference['k_reps']})")
+        mismatch = reference_correction_warning(reference, correction)
+        if mismatch:
+            print(f"WARNING: {mismatch}")
 
-    session = Session(exercise, side=side)
+    session = Session(exercise, side=side, correction=correction)
     smoother = build_smoother()
     cue_cooldown = rules_module.CueCooldown(config["cue_cooldown_s"]["value"]) if scorer == "rules" else None
     rep_count = 0
@@ -133,7 +170,8 @@ def run_headless(video_path: str, exercise: str, scorer: str, span: tuple[int, i
     if span is None:
         session.start()  # Start before frame 0, never Stop -- identical to the pre-this-flag behavior
     print(f"Scoring {video_path} (exercise={exercise}, scorer={scorer}, fps={fps:.2f}, smoothing={'on' if smoother else 'off'}"
-          f", side={side}{f', span={span}' if span else ''})")
+          f", side={side}, angle offset={reference_offset(correction, exercise)}"
+          f"{f', span={span}' if span else ''})")
 
     while True:
         ok, frame = cap.read()
@@ -208,7 +246,7 @@ if __name__ == "__main__":
 
     if ARGS.video:
         run_headless(ARGS.video, ARGS.exercise, ARGS.scorer, tuple(ARGS.span) if ARGS.span else None, ARGS.reference,
-                     SIDE_CHOICES[ARGS.side])
+                     SIDE_CHOICES[ARGS.side], ARGS.angle_correction == "on")
         raise SystemExit(0)
 
     PLAIN_UI = ui_theme.plain_ui_enabled()
@@ -284,6 +322,10 @@ if __name__ == "__main__":
             reference_choice = st.selectbox("Patient reference (optional)", ["None"] + [f.stem for f in reference_files])
             if reference_choice != "None":
                 reference = rules_module.load_reference(reference_dir / f"{reference_choice}.json")
+                mismatch = reference_correction_warning(
+                    reference, active_angle_correction(ARGS.scorer, ARGS.angle_correction == "on"))
+                if mismatch:
+                    st.warning(mismatch)
                 ignored_message = rules_module.reference_ignored_message(rules_config, reference)
                 if ignored_message:
                     st.warning(ignored_message)
@@ -368,7 +410,8 @@ if __name__ == "__main__":
                 "fps": round(fps, 2),
             }
             tracker = SessionTracker(user_id=user_id, exercise=exercise, camera_info=camera_info)
-            session = Session(exercise, side=side_mode)
+            session = Session(exercise, side=side_mode,
+                              correction=active_angle_correction(ARGS.scorer, ARGS.angle_correction == "on"))
             session.start()  # "Start session" button already gated entry into this block -- begin calibrating now
             smoother = build_smoother()
             required_roles = rules_module.required_joint_roles() if rules_config else None
@@ -602,7 +645,8 @@ if __name__ == "__main__":
                     cue_slot.markdown(ui_theme.render_cue_banner(ui_theme.STATE_ERROR), unsafe_allow_html=True)
                 st.stop()
             fps = capture.get(cv2.CAP_PROP_FPS) or 30.0
-            session = Session(exercise, side=side_mode)
+            session = Session(exercise, side=side_mode,
+                              correction=active_angle_correction(ARGS.scorer, ARGS.angle_correction == "on"))
             session.start()
             smoother = build_smoother()
             required_roles = rules_module.required_joint_roles()
@@ -663,6 +707,8 @@ if __name__ == "__main__":
                     reference_name, exercise, collected_reps, fps,
                     rules_module.elbow_statistic(rules_config) if rules_config else "min",
                 )
+                reference["angle_offset_deg"] = reference_offset(
+                    active_angle_correction(ARGS.scorer, ARGS.angle_correction == "on"), exercise)
                 saved_path = rules_module.save_reference(reference)
                 st.success(f"Saved reference '{reference_name}' ({len(collected_reps)} reps) to {saved_path}")
                 st.json(reference["medians"])

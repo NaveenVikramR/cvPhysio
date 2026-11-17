@@ -71,6 +71,36 @@ The live app (Streamlit "Which arm?" selector, and `--side` with `--video`) now 
 - **Profile view:** the right arm is hidden, so `auto` mostly locked the left. That view is unsupported, as finding 4 already says.
 - **Not checked:** a live webcam session with the new selector (the page renders; Start was not pressed), and the new team recordings, which don't exist yet.
 
+## F2 step 2 result: shoulder offset correction (2026-11-17)
+
+**What was compared.** `scripts/fit_angle_correction.py` fitted four corrections of the shoulder (abduction) angle on front-view calibration subjects 1 and 2 only, and judged them on evaluation subjects 3, 4, 5, 7, 8 and 9. Full tables are in `results/angle_correction.md` (gitignored).
+
+| Method | What it does | Front-view evaluation: bias | MAE | 90th pct |
+|---|---|---|---|---|
+| A none | raw angle | −10.50° | 10.53° | 17.74° |
+| **B offset** | subtract −4.82° (calibration mean error) | −5.68° | **6.28°** | 12.92° |
+| C linear | invert mediapipe = 1.060 × mocap − 9.37 | −5.56° | 6.51° | 13.02° |
+| D rest-anchor | per recording, anchor the first 15 frames to the calibration subjects' mean true rest angle (34.08°) | +5.90° | 7.74° | 13.83° |
+
+Per evaluation subject (front-view MAE, A → B): 3: 8.23 → 4.13, 4: 11.07 → 6.63, 5: 9.77 → 5.94, 7: 8.58 → 4.82, 8: 10.93 → 6.53, 9: 13.62 → 8.80.
+
+**Chosen: B.**
+- It lowers the error for all six evaluation subjects; front-view MAE falls by about 40%.
+- C fits the calibration pair better (MAE 3.46° against 4.24°) but is slightly worse on new people, which suggests the slope is fitted to those two subjects.
+- D is inconsistent: better for subjects 5, 8 and 9, clearly worse for 3 and 7. It assumes everyone rests at the same true angle. It was best in half-profile (11.07° against 15.05° for B), but front view is the recording setup.
+
+**What changed.**
+- `config/angle_correction.json` holds the offset (−4.82° for `shoulder_abduction` only) with its fitting provenance.
+- `src.feature_extraction.extract_features(..., correction=None)` applies `raw − offset`, clipped to [0, 180]. `Session(..., correction=None)` passes it through. Elbow and trunk angles are never corrected. With the default `None` every analysis script reproduces, including the pre-registered evaluation (no pinned file changed).
+- The live app (Streamlit and `--video`) turns it on for the rules scorer only; `--angle-correction off` gives raw angles. The classifier scorer always gets raw angles.
+- New references store `angle_offset_deg`. Loading a reference recorded with a different offset (including every reference saved before this change, which counts as raw) shows a warning, because in reference-relative mode the mismatch shifts the peak comparison by about 4.8°.
+
+**Limits.**
+- Fitted on two subjects. Evaluation subjects still read about 5.7° low after correction, so the calibration pair read less low than the new people. A larger offset chosen by looking at evaluation subjects would not be a fair fit, so it isn't made.
+- Reference-relative scoring cancels a constant offset, so it is unaffected. The gain is in the angles shown on screen and in the absolute `peak_angle` band (target 90° ± 15°).
+- Rotation has no correction: REHAB24-6 Ex1 has no rotation ground truth.
+- Rep detection is unchanged: the detector works relative to the calibrated rest baseline. Checked on a spare s01 calibration clip (not one of the seven evaluation clips): same reps, peaks 4.8° higher, every other measurement identical.
+
 ## Improvements to try in F2, ranked by expected gain against effort
 
 All of these come after the abduction pre-registered evaluation has run, because each one changes abduction results. Each is fitted on calibration subjects only and reported on evaluation subjects.
