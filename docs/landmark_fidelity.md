@@ -101,6 +101,30 @@ Per evaluation subject (front-view MAE, A → B): 3: 8.23 → 4.13, 4: 11.07 →
 - Rotation has no correction: REHAB24-6 Ex1 has no rotation ground truth.
 - Rep detection is unchanged: the detector works relative to the calibrated rest baseline. Checked on a spare s01 calibration clip (not one of the seven evaluation clips): same reps, peaks 4.8° higher, every other measurement identical.
 
+## F2 step 3 result: smoothing tuned against motion capture (2026-11-17)
+
+**What was run.** `scripts/tune_smoothing_mocap.py` ran the app's One Euro smoother (`src/smoothing.py`) through `Session(side="auto")` on every front and half-profile REHAB24-6 Ex1 recording of calibration subjects 1, 2 and 6 (9 recordings). It tried 36 settings: `min_cutoff` 0.3–5 × `beta` 0–30. The selection rule was written into the script before it ran:
+- **Eligible:** on every calibration recording the rep count is no worse than with smoothing off, the median added lag is at most 3 frames, and the mean peak shift is at most 2°.
+- **Chosen:** the lowest front-view shoulder error after removing the constant offset, which must beat smoothing off by at least 0.1°.
+
+Full table in `results/smoothing_mocap.md` (gitignored).
+
+**Result: no setting chosen; smoothing stays off.** Selected rows (calibration subjects):
+
+| min_cutoff / beta | Exact rep counts | Added lag | Peak shift | Front shoulder error (offset removed) | Front jitter |
+|---|---|---|---|---|---|
+| off | 5/9 | 0 | 0.00° | **4.24°** | 0.46° |
+| 1 / 0.3 (the old defaults) | 4/9 | 3 frames | 2.66° | 6.26° | 0.29° |
+| 0.3 / 10 | 8/9 | 1 frame | 0.80° | 4.56° | 0.34° |
+| 5 / 30 (lowest error) | 7/9 | 0 | 0.41° | 4.32° | 0.38° |
+
+- **Every setting raised the shoulder error.** Heavy settings lag the arm by up to 13 frames and cut the peak by up to 12°. Light settings add no lag but still don't help, because the error that remains isn't frame-to-frame shake: raw jitter is already about 0.5° per frame, and most of the error is a per-subject offset (finding 1).
+- **The old defaults (1 / 0.3) are confirmed worse** on every measure except jitter, matching the earlier finding that they dropped a real rep.
+- **Unexpected: many settings improved rep counting** (5/9 exact → 7–8/9). Rep counting wasn't the selection target and the rule isn't changed after the fact. It fits the rep detector's known weakness: a rep's start isn't debounced (`docs/open_questions.md` #14), and smoothing acts as a crude debounce. The smaller fix is in the detector, not in the angles everyone sees.
+- **Not run:** the evaluation subjects and the own-clip check, since no setting was chosen. Evaluation subjects stay unseen for this question.
+
+**What changed:** only `config/smoothing.json`'s `enabled_comment`, which now records this result. `enabled` stays `false`.
+
 ## Improvements to try in F2, ranked by expected gain against effort
 
 All of these come after the abduction pre-registered evaluation has run, because each one changes abduction results. Each is fitted on calibration subjects only and reported on evaluation subjects.

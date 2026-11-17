@@ -1,6 +1,6 @@
 {
   "enabled": false,
-  "enabled_comment": "Left off by default: scripts/tune_smoothing.py requires >= 3 calibration-set clips to tune min_cutoff/beta safely, and only 1 exists in data/clips_manifest.csv right now. Also, the previous fixed min_cutoff=1.0/beta=0.3 defaults were measured (scripts/measure_smoothing_effect.py) to drop a real rep's count 1 -> 0 on the one real clip tested -- do not re-enable without re-running the tuning script once enough calibration clips exist.",
+  "enabled_comment": "Off. Tuned against REHAB24-6 mocap on 2026-11-17 (scripts/tune_smoothing_mocap.py, docs/landmark_fidelity.md 'F2 step 3'): no (min_cutoff, beta) cell passed the pre-declared rule -- every cell raised front-view shoulder error after offset removal (best 4.32 vs 4.24 deg off) heavy settings add lag, and even lag-free settings can't help because the remaining error is not frame-to-frame noise (raw jitter is already ~0.5 deg/frame). Earlier: the fixed 1.0/0.3 defaults dropped a real rep on a real clip (scripts/measure_smoothing_effect.py). min_cutoff/beta below are unchanged and unused while off.",
   "min_cutoff": 1.0,
   "beta": 0.3,
   "d_cutoff": 1.0,
