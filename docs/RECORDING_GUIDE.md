@@ -174,12 +174,9 @@ for Stage 3 and update this guide.
 
 ### Stage 2: the frozen abduction evaluation (only on the laptop that has the 7 original clips)
 
-Skip this if you don't have that laptop. If you do, follow
-`docs/HANDOVER.md`, section "How to resume", step 4, exactly. It runs
-`qc_all.py`, then `evaluate_own_clips.py` (only if QC says OK for all 7),
-then `compute_primary_outcomes.py`. **Run each one once.** Package the
-outputs with `scripts/package_results.py preregistered-abduction-eval ...`
-and push.
+**Recorder: skip this stage.** It belongs to the developer, on the laptop
+that holds the original clips (`docs/HANDOVER.md`, section "How to
+resume", step 4).
 
 ### Stage 3: the full dataset (after Stage 1 is decided)
 
@@ -204,8 +201,7 @@ python scripts/record_clip.py --exercise <abduction|rotation> --view <front|45|s
 - **Videos:** copy the whole `data/recordings/team/` folder **and**
   `data/team_manifest.csv` to our private shared drive folder. They never
   go into git.
-- **Small results** (reports, plots, CSVs, no video) go into git through
-  `team_results/`:
+- **Small results** (reports, plots, CSVs, no video): package them first.
 
 ```bash
 python scripts/package_results.py <short-label> --machine <laptop|pc> <files...>
@@ -213,19 +209,19 @@ python scripts/package_results.py <short-label> --machine <laptop|pc> <files...>
 
 This copies the files into `team_results/<date>_<label>/` with a
 `provenance.json` recording the git commit, so we know exactly which code
-produced them. Then commit and push that folder:
+produced them. **Upload that folder to the shared drive as well.** You
+don't commit or push anything: the developer adds it to the repo.
 
-```bash
-git add team_results
-```
+## Keeping your copy of the repo safe
 
-```bash
-git commit -m "Add <label> results"
-```
-
-```bash
-git push
-```
+- You only ever **read** from the repo. Don't edit, commit or push anything.
+  (You can't push anyway; the developer adds your results.)
+- To get updates (for example after the guide changes), run
+  `git pull --ff-only`.
+- If git ever complains, or you think you broke something: first copy
+  `data/recordings/team/` and `data/team_manifest.csv` to the drive,
+  **because they live inside the repo folder.** Then delete the whole folder
+  and clone it again (step 1).
 
 ## 7. If something goes wrong
 
